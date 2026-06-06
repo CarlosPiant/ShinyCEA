@@ -1,0 +1,165 @@
+---
+title: "Cost-Effectiveness Analysis Report"
+subtitle: "`r params$model_name`"
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: true
+    toc_depth: 2
+  pdf_document:
+    toc: true
+    toc_depth: 2
+params:
+  model_name: "CEA Model"
+  model_key: ""
+  strategies: !r c("A", "B")
+  wtp: !r 100000
+  ref_label: ""
+  det_table_csv: ""
+  frontier_csv: ""
+  icers_csv: ""
+  psa_summary_csv: ""
+  tornado_png: ""
+  ce_plane_png: ""
+  ceac_png: ""
+  frontier_png: ""
+  survival_png: ""
+  traces_png: ""
+  threshold_png: ""
+  n_psa: !r 0
+  psa_dropped: !r 0
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, warning = FALSE, message = FALSE,
+  fig.width = 7, fig.height = 4.8, dpi = 300
+)
+has_file <- function(x) is.character(x) && length(x) == 1 && nzchar(x) && file.exists(x)
+read_csv_safe <- function(path) {
+  if (!has_file(path)) return(NULL)
+  tryCatch(read.csv(path, stringsAsFactors = FALSE, check.names = FALSE),
+           error = function(e) NULL)
+}
+fmt_currency <- function(x) {
+  ifelse(is.finite(x), paste0("$", formatC(round(x), format = "f", big.mark = ",", digits = 0)), "NA")
+}
+```
+
+# 1. Analysis Settings
+
+| Setting | Value |
+|---------|-------|
+| **Model** | `r params$model_name` |
+| **Strategies** | `r paste(params$strategies, collapse = ", ")` |
+| **Reference strategy** | `r params$ref_label` |
+| **WTP threshold** | `r fmt_currency(params$wtp)` /QALY |
+| **PSA iterations** | `r format(params$n_psa, big.mark = ",")` |
+| **PSA dropped** | `r params$psa_dropped` |
+
+---
+
+# 2. Deterministic Results
+
+```{r det-table, results='asis'}
+det_tab <- read_csv_safe(params$det_table_csv)
+if (!is.null(det_tab)) {
+  # Format numeric columns
+  num_cols <- intersect(c("Cost", "NMB", "IncCost_vsRef"), names(det_tab))
+  for (col in num_cols) det_tab[[col]] <- fmt_currency(det_tab[[col]])
+  round_cols <- intersect(c("QALY", "IncQALY_vsRef"), names(det_tab))
+  for (col in round_cols) det_tab[[col]] <- round(det_tab[[col]], 3)
+  icer_cols <- intersect(c("ICER_vsRef"), names(det_tab))
+  for (col in icer_cols) det_tab[[col]] <- ifelse(is.finite(det_tab[[col]]),
+    formatC(round(det_tab[[col]]), format = "f", big.mark = ",", digits = 0), "---")
+  knitr::kable(det_tab, caption = "Deterministic results (ordered by NMB).")
+} else {
+  cat("*Deterministic results not available. Run the deterministic analysis first.*\n\n")
+}
+```
+
+## 2.1 Cost-Effectiveness Frontier
+
+```{r frontier-table, results='asis'}
+frontier_tab <- read_csv_safe(params$frontier_csv)
+icers_tab <- read_csv_safe(params$icers_csv)
+if (!is.null(frontier_tab)) {
+  knitr::kable(frontier_tab, caption = "Non-dominated (frontier) strategies, ordered by effectiveness.",
+               digits = 3)
+}
+if (!is.null(icers_tab)) {
+  knitr::kable(icers_tab, caption = "Sequential ICERs along the efficiency frontier.", digits = 1)
+}
+if (is.null(frontier_tab) && is.null(icers_tab)) {
+  cat("*Frontier analysis not available.*\n\n")
+}
+```
+
+```{r frontier-plot, fig.cap="Cost-effectiveness frontier. Non-dominated strategies connected by dashed line."}
+if (has_file(params$frontier_png)) knitr::include_graphics(params$frontier_png) else cat("*Frontier plot not available.*")
+```
+
+## 2.2 Tornado Diagram
+
+```{r tornado-plot, fig.cap="One-way deterministic sensitivity analysis."}
+if (has_file(params$tornado_png)) knitr::include_graphics(params$tornado_png) else cat("*Tornado plot not available.*")
+```
+
+---
+
+# 3. Probabilistic Sensitivity Analysis
+
+## 3.1 CE Plane
+
+```{r ce-plane, fig.cap="Cost-effectiveness plane (incremental costs vs. incremental QALYs). Dashed line = WTP threshold."}
+if (has_file(params$ce_plane_png)) knitr::include_graphics(params$ce_plane_png) else cat("*CE plane not available. Run PSA first.*")
+```
+
+## 3.2 PSA Summary
+
+```{r psa-summary, results='asis'}
+psa_tab <- read_csv_safe(params$psa_summary_csv)
+if (!is.null(psa_tab)) {
+  knitr::kable(psa_tab, caption = "PSA summary: mean (95% credible interval).")
+} else {
+  cat("*PSA summary not available.*\n\n")
+}
+```
+
+## 3.3 Cost-Effectiveness Acceptability Curve
+
+```{r ceac, fig.cap="CEAC: probability each strategy is cost-effective across WTP thresholds."}
+if (has_file(params$ceac_png)) knitr::include_graphics(params$ceac_png) else cat("*CEAC not available.*")
+```
+
+---
+
+# 4. Survival & Traces
+
+## 4.1 Survival Curves
+
+```{r survival, fig.cap="Survival curves by strategy."}
+if (has_file(params$survival_png)) knitr::include_graphics(params$survival_png) else cat("*Survival curves not available (model may not produce survival output).*")
+```
+
+## 4.2 State Occupancy Traces
+
+```{r traces, fig.cap="Markov trace: state occupancy over time by strategy."}
+if (has_file(params$traces_png)) knitr::include_graphics(params$traces_png) else cat("*State traces not available.*")
+```
+
+---
+
+# 5. Threshold Analysis
+
+```{r threshold, fig.cap="Threshold analysis: parameter value where ICER = WTP or INB = 0."}
+if (has_file(params$threshold_png)) knitr::include_graphics(params$threshold_png) else cat("*Threshold analysis not available.*")
+```
+
+---
+
+# Notes
+
+- This report was generated by the **ShinyCEA** R package.
+- Sections marked "not available" require running the corresponding analysis in the app before downloading the report.
+- All monetary values are in nominal dollars; no discounting is applied unless built into the model.

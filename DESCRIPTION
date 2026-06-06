@@ -1,0 +1,32 @@
+Package: ShinyCEA
+Title: Shiny Application for Cost-Effectiveness Analysis
+Version: 0.1.0
+Authors@R:
+    person("Carlos", "Pineda-Antunez", , "carlospinedant@gmail.com", role = c("aut", "cre"))
+Description: An R package with a Shiny application designed for teaching and
+    applied research in cost-effectiveness analysis (CEA). Supports multiple
+    model structures (e.g., Markov, Partitioned Survival) and allows analysts
+    to perform deterministic and probabilistic evaluations. Features include
+    parameter upload/editing, sensitivity analyses (DSA/PSA), publication-ready
+    plots (Tornado, CE Plane, Frontier, CEAC), downloadable results, and
+    automated report generation. Users can plug in custom models with minimal
+    code via the new_cea_model() interface.
+License: MIT + file LICENSE
+URL: https://github.com/CarlosPiant/ShinyCEA
+BugReports: https://github.com/CarlosPiant/ShinyCEA/issues
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports:
+    shiny,
+    bslib,
+    DT,
+    ggplot2,
+    rlang
+Suggests:
+    testthat (>= 3.0.0),
+    ggrepel,
+    rmarkdown,
+    knitr
+VignetteBuilder: knitr
+Config/testthat/edition: 3

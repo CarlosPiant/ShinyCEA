@@ -1,0 +1,321 @@
+---
+title: "Creating Custom CEA Models"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Creating Custom CEA Models}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+ShinyCEA ships with bundled example models (Sick-Sicker, PF-Prog-Death,
+Partitioned Survival), but the real power of the package is plugging in **your
+own model** with minimal effort. This vignette walks through the model
+interface, builds a custom model from scratch, and shows how to run it through
+the full analysis pipeline and the Shiny app.
+
+## The Model Contract
+
+Every CEA model in ShinyCEA is a list of three functions, wrapped by
+`new_cea_model()`:
+
+| Function | Returns | Purpose |
+|----------|---------|---------|
+| `info()` | `list(key, name, strategies)` | Model metadata |
+| `params()` | `data.frame` with columns `name`, `mean`, `lower`, `upper`, `base`, `distribution`, `include_psa`, `include_tornado` | Default parameter table |
+| `simulate(pars, strategy)` | `list(cost, qaly)` with optional `trace` and `survival` | Run one strategy with given parameters |
+
+That's it. If your model can produce a cost and a QALY for each strategy given
+a named list of parameters, it works with ShinyCEA.
+
+## Step 1: Define the Model
+
+Let's build a simple 3-state Markov model for a chronic disease with two
+treatment arms: **standard of care** and a **new drug**.
+
+```{r define-model}
+library(ShinyCEA)
+
+my_model <- new_cea_model(
+
+  info = function() {
+    list(
+      key = "chronic_disease",
+      name = "Chronic Disease (3-state Markov)",
+      strategies = c("soc", "new_drug")
+    )
+  },
+
+  params = function() {
+    do.call(rbind, list(
+      # Structural
+      cea_param("n_cycles",      40,   20,    60,
+                distribution = "fixed",
+                include_psa = FALSE, include_tornado = FALSE),
+
+      # Transition probabilities (per cycle)
+      cea_param("p_healthy_sick",  0.05, 0.02,  0.10,
+                distribution = "beta"),
+      cea_param("p_sick_dead",     0.08, 0.04,  0.15,
+                distribution = "beta"),
+      cea_param("p_healthy_dead",  0.01, 0.005, 0.02,
+                distribution = "beta"),
+
+      # Treatment effect
+      cea_param("rr_new_drug",     0.70, 0.50,  0.90,
+                distribution = "lognormal"),
+
+      # Utilities
+      cea_param("u_healthy",       0.95, 0.85,  1.00,
+                distribution = "beta"),
+      cea_param("u_sick",          0.60, 0.40,  0.75,
+                distribution = "beta"),
+
+      # Costs per cycle
+      cea_param("c_healthy",       200,  100,   400,
+                distribution = "gamma"),
+      cea_param("c_sick",         1500,  800,  2500,
+                distribution = "gamma"),
+      cea_param("c_new_drug",     500,   300,   800,
+                distribution = "gamma")
+    ))
+  },
+
+  simulate = function(pars, strategy) {
+    nc <- as.integer(pars[["n_cycles"]])
+
+    # Base transition probabilities
+    p_hs <- pars[["p_healthy_sick"]]
+    p_sd <- pars[["p_sick_dead"]]
+    p_hd <- pars[["p_healthy_dead"]]
+
+    # New drug reduces progression (Healthy -> Sick)
+    if (strategy == "new_drug") {
+      p_hs <- p_hs * pars[["rr_new_drug"]]
+    }
+
+    # Transition matrix: Healthy, Sick, Dead
+    P <- rbind(
+      c(max(0, 1 - p_hs - p_hd), p_hs,                p_hd),
+      c(0,                        max(0, 1 - p_sd),     p_sd),
+      c(0,                        0,                    1)
+    )
+
+    # Markov trace
+    trace <- matrix(0, nrow = nc + 1, ncol = 3,
+                    dimnames = list(NULL, c("Healthy", "Sick", "Dead")))
+    trace[1, ] <- c(1, 0, 0)
+    for (t in seq_len(nc)) {
+      trace[t + 1, ] <- trace[t, ] %*% P
+    }
+
+    # Costs and QALYs
+    drug_cost <- if (strategy == "new_drug") pars[["c_new_drug"]] else 0
+    cost_vec <- c(pars[["c_healthy"]] + drug_cost,
+                  pars[["c_sick"]]    + drug_cost,
+                  0)
+    util_vec <- c(pars[["u_healthy"]], pars[["u_sick"]], 0)
+
+    occ  <- trace[-1, , drop = FALSE]
+    cost <- sum(occ %*% cost_vec)
+    qaly <- sum(occ %*% util_vec)
+
+    # Survival curve (optional but enables the Survival tab)
+    time <- seq(0, nc)
+    os   <- 1 - trace[, "Dead"]
+    survival <- data.frame(time = time, surv = os, curve = "OS")
+
+    list(cost = cost, qaly = qaly, trace = trace, survival = survival)
+  }
+)
+```
+
+`new_cea_model()` validates everything on creation. If your `info()` is
+missing a field, your parameter table lacks a required column, or your
+`simulate()` returns non-finite values, you get a clear error immediately ---
+not a cryptic crash 500 PSA iterations later.
+
+```{r print-model}
+print(my_model)
+```
+
+## Step 2: Run Deterministic Analysis
+
+```{r deterministic}
+det <- run_deterministic(my_model, my_model$default_params(), wtp = 50000)
+
+det$table[, c("Strategy", "Cost", "QALY", "NMB", "ICER_vsRef")]
+```
+
+The reference strategy is auto-selected as the one with the highest NMB.
+You can override this:
+
+```{r det-pinned}
+det_pinned <- run_deterministic(my_model, my_model$default_params(),
+                                wtp = 50000, ref_strategy = "soc")
+det_pinned$ref
+```
+
+## Step 3: Visualize Results
+
+### Frontier Plot
+
+```{r frontier-plot}
+plot_frontier(det$frontier_status)
+```
+
+### Tornado Diagram
+
+```{r tornado}
+params_df <- my_model$default_params()
+df_tor <- params_df[params_df$include_tornado &
+                      (is.finite(params_df$lower) | is.finite(params_df$upper)), ]
+
+tor <- build_tornado_data(df_tor, det$pars, my_model,
+                          ref = "soc", target = "new_drug",
+                          metric = "INB", wtp = 50000)
+
+plot_tornado(tor, base_val = unique(tor$base)[1],
+             metric_label = "INB (new_drug vs soc)")
+```
+
+## Step 4: Probabilistic Sensitivity Analysis
+
+```{r psa}
+set.seed(20250605)
+psa <- run_psa(my_model, my_model$default_params(), n_sim = 500)
+cat("Used:", psa$used, "| Dropped:", psa$dropped, "\n")
+```
+
+### CE Plane
+
+```{r ce-plane}
+inc_df <- data.frame(
+  strategy  = "new_drug",
+  inc_qaly  = psa$results[["new_drug.q"]]    - psa$results[["soc.q"]],
+  inc_cost  = psa$results[["new_drug.cost"]]  - psa$results[["soc.cost"]]
+)
+plot_ce_plane(inc_df, wtp = 50000)
+```
+
+### CEAC
+
+```{r ceac}
+ceac <- compute_ceac(psa$results, c("soc", "new_drug"),
+                     wtp_max = 100000, wtp_step = 2000)
+plot_ceac(ceac)
+```
+
+## Step 5: Survival and Traces
+
+Because our `simulate()` returns `trace` and `survival`, the app's Survival
+and Traces tabs work automatically.
+
+```{r survival}
+surv_data <- do.call(rbind, lapply(c("soc", "new_drug"), function(s) {
+  res <- my_model$simulate(det$pars, s)
+  df <- res$survival
+  df$strategy <- s
+  df
+}))
+plot_survival(surv_data, curve_name = "OS")
+```
+
+```{r traces}
+trace_data <- do.call(rbind, lapply(c("soc", "new_drug"), function(s) {
+  res <- my_model$simulate(det$pars, s)
+  tr <- res$trace
+  time <- seq(0, nrow(tr) - 1)
+  d <- as.data.frame(tr)
+  d$time <- time
+  long <- stats::reshape(d, direction = "long",
+                         varying = c("Healthy", "Sick", "Dead"),
+                         v.names = "prob", timevar = "state",
+                         times = c("Healthy", "Sick", "Dead"),
+                         idvar = "time")
+  long$strategy <- s
+  rownames(long) <- NULL
+  long[, c("strategy", "time", "state", "prob")]
+}))
+plot_trace(trace_data, facet = TRUE)
+```
+
+## Step 6: Generate a Report
+
+```{r report, eval = FALSE}
+generate_cea_report(
+  output_file = "my_analysis.docx",
+  format = "word",
+  model = my_model,
+  det_result = det,
+  psa_result = psa,
+  wtp = 50000,
+  plots = list(
+    frontier = plot_frontier(det$frontier_status),
+    tornado  = plot_tornado(tor, unique(tor$base)[1], "INB"),
+    ce_plane = plot_ce_plane(inc_df, 50000),
+    ceac     = plot_ceac(ceac)
+  ),
+  psa_summary_df = build_psa_summary(psa$results, c("soc", "new_drug"), wtp = 50000)
+)
+```
+
+## Step 7: Launch the Shiny App
+
+```{r app, eval = FALSE}
+# Launch with just your model
+run_cea_app(my_model)
+
+# Or combine with bundled examples
+run_cea_app(my_model, cea_sick_sicker(), cea_partitioned_survival())
+```
+
+The app gives you an interactive environment with editable parameters, CSV
+upload/download, all the plots above, health checks, threshold analysis, and
+report generation --- all powered by the same three functions you just wrote.
+
+## Tips for Building Models
+
+**Return `trace` when you can.** A Markov trace (matrix with one row per cycle,
+one column per state) enables the Traces tab and automatic OS derivation from
+the death column.
+
+**Return `survival` for richer output.** A data.frame with `time`, `surv`, and
+`curve` columns enables the Survival tab. Use `curve = "OS"` for overall
+survival and `curve = "PFS"` for progression-free survival. The app handles
+multiple curves.
+
+**Use `cea_param()` for clean parameter tables.** It ensures the correct column
+names and types. The `distribution` field controls PSA sampling:
+
+| Distribution | When to use |
+|-------------|-------------|
+| `"beta"` | Probabilities and utilities (bounded 0--1) |
+| `"gamma"` | Costs and positive-valued parameters |
+| `"lognormal"` | Hazard ratios and relative risks |
+| `"normal"` | Unbounded continuous parameters |
+| `"uniform"` | Parameters with hard bounds, no central tendency |
+| `"triangular"` | Expert-elicited with mode + bounds |
+| `"pert"` | Like triangular but smoother (Beta-PERT) |
+| `"fixed"` | Structural parameters (cycle length, time horizon) |
+
+**Name parameters with prefixes.** Parameters starting with `p_` or `u_` are
+auto-clamped to [0, 1] during PSA. Parameters starting with `c_` or `drug`
+are clamped to >= 0. This prevents nonsensical draws without extra code.
+
+**Set `include_psa = FALSE` for structural parameters** like `n_cycles` or
+`time_horizon` that shouldn't vary in PSA.
+
+**Validation happens at construction time.** `new_cea_model()` calls
+`validate_cea_model()` automatically, which checks that `info()` has the
+right fields, `params()` returns a well-formed table, and `simulate()` runs
+successfully for the first strategy. Fix errors at definition time, not at
+analysis time.

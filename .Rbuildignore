@@ -1,0 +1,14 @@
+^\.claude$
+^\.workflow-log\.json$
+^\.workflow-state$
+^CLAUDE\.md$
+^PROJECT_STRUCTURE\.md$
+^quality_reports$
+^scripts$
+^writing$
+^output$
+^data$
+^\.Rproj\.user$
+^.*\.Rproj$
+^\.github$
+^README\.md$

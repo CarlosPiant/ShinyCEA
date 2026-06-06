@@ -1,0 +1,25 @@
+# R artifacts
+.Rhistory
+.Rdata
+.RData
+.Ruserdata
+.httr-oauth
+
+# R package build
+*.tar.gz
+*.Rcheck/
+inst/doc/
+
+# RStudio
+.Rproj.user/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Workflow state (local only)
+.workflow-log.json
+.workflow-state/
+quality_reports/
+.claude
+CLAUDE.md
