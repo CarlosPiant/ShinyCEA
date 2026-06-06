@@ -753,6 +753,368 @@ cea_app_server <- function(models) {
       }
     )
 
+    # --- VOI ---
+    evpi_data <- shiny::reactive({
+      shiny::req(psa_results(), det_result())
+      compute_evpi(psa_results(), det_result()$strategies,
+                   wtp_max = max(input$wtp, 200000))
+    })
+
+    output$evpi_plot <- shiny::renderPlot({
+      shiny::req(evpi_data())
+      print(plot_evpi(evpi_data(), palette = current_palette()))
+    })
+
+    output$download_evpi_csv <- shiny::downloadHandler(
+      filename = function() "evpi.csv",
+      content = function(file) utils::write.csv(evpi_data(), file, row.names = FALSE)
+    )
+
+    evppi_data <- shiny::reactive({
+      shiny::req(psa_results(), det_result())
+      draws <- psa_state$draws
+      shiny::req(!is.null(draws), ncol(draws) > 0)
+      shiny::withProgress(message = "Computing EVPPI...", value = 0.5, {
+        compute_evppi(psa_results(), draws, det_result()$strategies, wtp = input$wtp)
+      })
+    })
+
+    output$evppi_plot <- shiny::renderPlot({
+      shiny::req(evppi_data())
+      print(plot_evppi(evppi_data(), palette = current_palette()))
+    })
+
+    output$evppi_table <- DT::renderDT({
+      shiny::req(evppi_data())
+      df <- evppi_data()
+      df$EVPPI <- round(df$EVPPI, 2)
+      DT::datatable(df, options = list(pageLength = 15, scrollX = TRUE), rownames = FALSE)
+    })
+
+    output$download_evppi_csv <- shiny::downloadHandler(
+      filename = function() "evppi.csv",
+      content = function(file) utils::write.csv(evppi_data(), file, row.names = FALSE)
+    )
+
+    # --- Expected Loss ---
+    el_data <- shiny::reactive({
+      shiny::req(psa_results(), det_result())
+      compute_expected_loss(psa_results(), det_result()$strategies,
+                            wtp_max = max(input$wtp, 200000))
+    })
+
+    output$expected_loss_plot <- shiny::renderPlot({
+      shiny::req(el_data())
+      print(plot_expected_loss(el_data(), palette = current_palette()))
+    })
+
+    output$download_el_csv <- shiny::downloadHandler(
+      filename = function() "expected_loss.csv",
+      content = function(file) utils::write.csv(el_data(), file, row.names = FALSE)
+    )
+
+    # --- Scenarios ---
+    sc_store <- shiny::reactiveVal(list())
+
+    output$sc_param_ui <- shiny::renderUI({
+      shiny::req(params_rv())
+      shiny::selectInput("sc_param_name", "Parameter to override",
+                         choices = params_rv()$name)
+    })
+
+    shiny::observeEvent(input$sc_add, {
+      nm <- trimws(input$sc_name)
+      shiny::req(nzchar(nm), input$sc_param_name)
+      current <- sc_store()
+      if (is.null(current[[nm]])) current[[nm]] <- list()
+      current[[nm]][[input$sc_param_name]] <- input$sc_param_value
+      sc_store(current)
+    })
+
+    shiny::observeEvent(input$sc_add_base, {
+      current <- sc_store()
+      current[["Base case"]] <- list()
+      sc_store(current)
+    })
+
+    shiny::observeEvent(input$sc_clear, { sc_store(list()) })
+
+    output$sc_list_table <- DT::renderDT({
+      sc <- sc_store()
+      if (length(sc) == 0) {
+        return(DT::datatable(
+          data.frame(Scenario = "No scenarios defined", Overrides = "",
+                     stringsAsFactors = FALSE),
+          options = list(dom = "t"), rownames = FALSE
+        ))
+      }
+      rows <- lapply(names(sc), function(nm) {
+        overrides <- sc[[nm]]
+        desc <- if (length(overrides) == 0) {
+          "(base case)"
+        } else {
+          paste(names(overrides), "=", unlist(overrides), collapse = "; ")
+        }
+        data.frame(Scenario = nm, Overrides = desc, stringsAsFactors = FALSE)
+      })
+      DT::datatable(do.call(rbind, rows), options = list(dom = "t", pageLength = 20),
+                    rownames = FALSE)
+    })
+
+    sc_results <- shiny::eventReactive(input$sc_run, {
+      sc <- sc_store()
+      shiny::req(length(sc) > 0)
+      shiny::withProgress(message = "Running scenarios...", value = 0, {
+        ref <- if (identical(input$ref_mode, "pinned")) input$ref_pinned else NULL
+        res <- run_scenarios(current_model(), params_rv(), sc,
+                             wtp = input$wtp, ref_strategy = ref)
+        shiny::incProgress(1)
+        res
+      })
+    })
+
+    output$sc_results_table <- DT::renderDT({
+      shiny::req(sc_results())
+      df <- sc_results()
+      DT::datatable(df, options = list(pageLength = 20, scrollX = TRUE), rownames = FALSE) |>
+        DT::formatCurrency(c("Cost", "NMB"), digits = 0) |>
+        DT::formatRound("QALY", digits = 3) |>
+        DT::formatRound("ICER_vsRef", digits = 0)
+    })
+
+    output$sc_summary_table <- DT::renderDT({
+      shiny::req(sc_results())
+      summ <- summarize_scenarios(sc_results())
+      DT::datatable(summ, options = list(dom = "t", pageLength = 20), rownames = FALSE) |>
+        DT::formatCurrency(c("Cost", "NMB"), digits = 0) |>
+        DT::formatRound("QALY", digits = 3)
+    })
+
+    output$download_sc_csv <- shiny::downloadHandler(
+      filename = function() "scenario_results.csv",
+      content = function(file) utils::write.csv(sc_results(), file, row.names = FALSE)
+    )
+
+    # --- Forest plot ---
+    output$forest_target_ui <- shiny::renderUI({
+      shiny::req(sc_results())
+      strats <- unique(sc_results()$Strategy)
+      strats <- strats[!is.na(strats)]
+      shiny::selectInput("forest_target", "Strategy",
+                         choices = strats, selected = strats[1])
+    })
+
+    forest_plot_obj <- shiny::reactive({
+      shiny::req(sc_results(), input$forest_target)
+      plot_scenario_forest(sc_results(), target = input$forest_target,
+                           metric = input$forest_metric, wtp = input$wtp,
+                           palette = current_palette())
+    })
+
+    output$forest_plot <- shiny::renderPlot({
+      shiny::req(forest_plot_obj())
+      print(forest_plot_obj())
+    })
+
+    output$download_forest_png <- shiny::downloadHandler(
+      filename = function() "scenario_forest.png",
+      content = function(file) {
+        ggplot2::ggsave(file, plot = forest_plot_obj(),
+                        width = 9, height = 6, dpi = 300, units = "in")
+      }
+    )
+
+    # --- BIA ---
+    output$bia_current_mix_ui <- shiny::renderUI({
+      shiny::req(current_model())
+      strats <- current_model()$info()$strategies
+      n <- length(strats)
+      default_share <- round(1 / n, 2)
+      inputs <- lapply(strats, function(s) {
+        shiny::numericInput(paste0("bia_cur_", s), s, value = default_share,
+                            min = 0, max = 1, step = 0.05)
+      })
+      do.call(shiny::tagList, inputs)
+    })
+
+    output$bia_new_mix_ui <- shiny::renderUI({
+      shiny::req(current_model())
+      strats <- current_model()$info()$strategies
+      n <- length(strats)
+      inputs <- lapply(seq_along(strats), function(i) {
+        val <- if (i == 1) 0 else if (i == n) 1 else 0
+        shiny::numericInput(paste0("bia_new_", strats[i]), strats[i],
+                            value = val, min = 0, max = 1, step = 0.05)
+      })
+      do.call(shiny::tagList, inputs)
+    })
+
+    bia_result <- shiny::eventReactive(input$bia_run, {
+      shiny::req(current_model(), params_rv())
+      strats <- current_model()$info()$strategies
+
+      cur_mix <- vapply(strats, function(s) {
+        v <- input[[paste0("bia_cur_", s)]]
+        if (is.null(v) || !is.finite(v)) 0 else v
+      }, numeric(1))
+      names(cur_mix) <- strats
+
+      new_final <- vapply(strats, function(s) {
+        v <- input[[paste0("bia_new_", s)]]
+        if (is.null(v) || !is.finite(v)) 0 else v
+      }, numeric(1))
+      names(new_final) <- strats
+
+      new_mix <- if (isTRUE(input$bia_linear_uptake)) {
+        linear_uptake(cur_mix, new_final, years = input$bia_years)
+      } else {
+        new_final
+      }
+
+      growth <- .nc(input$bia_growth, 0) / 100
+
+      shiny::withProgress(message = "Running BIA...", value = 0.5, {
+        run_bia(current_model(), params_rv(),
+                population = input$bia_pop,
+                current_mix = cur_mix, new_mix = new_mix,
+                years = input$bia_years, annual_growth = growth)
+      })
+    })
+
+    output$bia_cost_plot <- shiny::renderPlot({
+      shiny::req(bia_result())
+      print(plot_bia(bia_result()$impact, palette = current_palette()))
+    })
+
+    output$bia_waterfall_plot <- shiny::renderPlot({
+      shiny::req(bia_result())
+      print(plot_bia_waterfall(bia_result()$impact, palette = current_palette()))
+    })
+
+    output$bia_total_text <- shiny::renderUI({
+      shiny::req(bia_result())
+      total <- bia_result()$total_impact
+      fmt <- formatC(abs(round(total)), format = "f", big.mark = ",", digits = 0)
+      label <- if (total >= 0) paste0("$", fmt, " additional cost") else paste0("$", fmt, " savings")
+      shiny::h5(paste0("Total ", input$bia_years, "-year budget impact: "),
+                shiny::span(label, style = paste0("color:", if (total >= 0) "#E74C3C" else "#27AE60", ";")))
+    })
+
+    output$bia_impact_table <- DT::renderDT({
+      shiny::req(bia_result())
+      DT::datatable(bia_result()$impact, options = list(dom = "t", pageLength = 10),
+                    rownames = FALSE) |>
+        DT::formatCurrency(c("Cost_Current", "Cost_New", "Budget_Impact"), digits = 0)
+    })
+
+    output$download_bia_csv <- shiny::downloadHandler(
+      filename = function() "bia_results.csv",
+      content = function(file) utils::write.csv(bia_result()$annual, file, row.names = FALSE)
+    )
+
+    # --- Subgroups ---
+    sg_store <- shiny::reactiveVal(list())
+
+    output$sg_ref_ui <- shiny::renderUI({
+      shiny::req(current_model())
+      strats <- current_model()$info()$strategies
+      shiny::selectInput("sg_ref", "Reference strategy", choices = strats, selected = strats[1])
+    })
+
+    output$sg_target_ui <- shiny::renderUI({
+      shiny::req(current_model())
+      strats <- current_model()$info()$strategies
+      sel <- if (length(strats) >= 2) strats[2] else strats[1]
+      shiny::selectInput("sg_target", "Target strategy", choices = strats, selected = sel)
+    })
+
+    output$sg_param_ui <- shiny::renderUI({
+      shiny::req(params_rv())
+      shiny::selectInput("sg_param_name", "Parameter to override",
+                         choices = params_rv()$name)
+    })
+
+    shiny::observeEvent(input$sg_add, {
+      nm <- trimws(input$sg_name)
+      shiny::req(nzchar(nm), input$sg_param_name)
+      current <- sg_store()
+      if (is.null(current[[nm]])) current[[nm]] <- list()
+      current[[nm]][[input$sg_param_name]] <- input$sg_param_value
+      sg_store(current)
+    })
+
+    shiny::observeEvent(input$sg_add_overall, {
+      current <- sg_store()
+      current[["Overall"]] <- list()
+      sg_store(current)
+    })
+
+    shiny::observeEvent(input$sg_clear, { sg_store(list()) })
+
+    output$sg_list_table <- DT::renderDT({
+      sg <- sg_store()
+      if (length(sg) == 0) {
+        return(DT::datatable(
+          data.frame(Subgroup = "No subgroups defined", Overrides = "",
+                     stringsAsFactors = FALSE),
+          options = list(dom = "t"), rownames = FALSE
+        ))
+      }
+      rows <- lapply(names(sg), function(nm) {
+        overrides <- sg[[nm]]
+        desc <- if (length(overrides) == 0) "(overall)" else
+          paste(names(overrides), "=", unlist(overrides), collapse = "; ")
+        data.frame(Subgroup = nm, Overrides = desc, stringsAsFactors = FALSE)
+      })
+      DT::datatable(do.call(rbind, rows), options = list(dom = "t", pageLength = 20),
+                    rownames = FALSE)
+    })
+
+    sg_results <- shiny::eventReactive(input$sg_run, {
+      sg <- sg_store()
+      shiny::req(length(sg) > 0, input$sg_ref, input$sg_target)
+      shiny::withProgress(message = "Running subgroup analysis...", value = 0.5, {
+        run_subgroups(current_model(), params_rv(), sg,
+                      target = input$sg_target, ref = input$sg_ref,
+                      wtp = input$wtp)
+      })
+    })
+
+    output$sg_results_table <- DT::renderDT({
+      shiny::req(sg_results())
+      df <- sg_results()[, c("Subgroup", "Target", "Reference",
+                              "IncCost", "IncQALY", "ICER", "INB")]
+      DT::datatable(df, options = list(pageLength = 20, scrollX = TRUE),
+                    rownames = FALSE) |>
+        DT::formatCurrency(c("IncCost", "INB"), digits = 0) |>
+        DT::formatRound("IncQALY", digits = 4) |>
+        DT::formatRound("ICER", digits = 0)
+    })
+
+    output$download_sg_csv <- shiny::downloadHandler(
+      filename = function() "subgroup_results.csv",
+      content = function(file) utils::write.csv(sg_results(), file, row.names = FALSE)
+    )
+
+    sg_forest_obj <- shiny::reactive({
+      shiny::req(sg_results())
+      plot_subgroup_forest(sg_results(), metric = input$sg_forest_metric,
+                           wtp = input$wtp, palette = current_palette())
+    })
+
+    output$sg_forest_plot <- shiny::renderPlot({
+      shiny::req(sg_forest_obj())
+      print(sg_forest_obj())
+    })
+
+    output$download_sg_forest_png <- shiny::downloadHandler(
+      filename = function() "subgroup_forest.png",
+      content = function(file) {
+        ggplot2::ggsave(file, plot = sg_forest_obj(),
+                        width = 9, height = 6, dpi = 300, units = "in")
+      }
+    )
+
     # --- Reports ---
     .collect_report_plots <- function() {
       safe_get <- function(expr) {

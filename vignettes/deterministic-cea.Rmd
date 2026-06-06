@@ -1,0 +1,213 @@
+---
+title: "Deterministic Cost-Effectiveness Analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Deterministic Cost-Effectiveness Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+This vignette introduces deterministic cost-effectiveness analysis (CEA) using
+the Sick-Sicker Markov model as a running example. It covers the core concepts
+of incremental analysis, dominance, the cost-effectiveness frontier, tornado
+diagrams, threshold analysis, and discounting.
+
+## Background
+
+Cost-effectiveness analysis compares interventions by their incremental cost
+per unit of health outcome gained, typically expressed as the **Incremental
+Cost-Effectiveness Ratio (ICER)**:
+
+$$\text{ICER} = \frac{\Delta C}{\Delta E} = \frac{C_1 - C_0}{E_1 - E_0}$$
+
+where $C$ and $E$ denote costs and effects (QALYs), and subscripts 0 and 1
+denote the comparator and the intervention (Drummond et al., 2015). A strategy
+is considered cost-effective if its ICER falls below the decision-maker's
+**willingness-to-pay (WTP)** threshold.
+
+An equivalent formulation uses the **Incremental Net Monetary Benefit (INB)**:
+
+$$\text{INB} = \lambda \cdot \Delta E - \Delta C$$
+
+where $\lambda$ is the WTP threshold. A positive INB indicates
+cost-effectiveness at that threshold (Stinnett & Mullahy, 1998).
+
+## Setup
+
+```{r load}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+print(m)
+```
+
+The Sick-Sicker model is a 4-state Markov cohort model (Healthy, Sick, Sicker,
+Dead) with 5 strategies: standard of care and 4 treatments that modify
+progression and mortality via relative risks. This model structure follows the
+DARTH Group's pedagogical framework (Alarid-Escudero et al., 2019).
+
+## Running the Deterministic Analysis
+
+```{r deterministic}
+det <- run_deterministic(m, m$default_params(), wtp = 100000)
+det$table[, c("Strategy", "Cost", "QALY", "NMB", "ICER_vsRef")]
+```
+
+`run_deterministic()` simulates all strategies at their base-case parameter
+values, computes NMB at the specified WTP, and auto-selects the reference
+strategy (highest NMB):
+
+```{r ref}
+cat("Reference strategy:", det$ref)
+```
+
+You can override the reference with `ref_strategy = "std"` to compute
+incremental values against a specific comparator.
+
+## Dominance and the Cost-Effectiveness Frontier
+
+When comparing multiple strategies, some may be **dominated** --- they cost
+more and produce fewer QALYs than an alternative. Others may be **extendedly
+dominated** --- they lie above the line connecting two other strategies on the
+cost-effectiveness plane, meaning a mix of those strategies would be preferred
+(Drummond et al., 2015).
+
+`frontier_analysis()` classifies every strategy:
+
+```{r frontier-table}
+det$frontier_status[, c("Strategy", "Cost", "QALY", "Status")]
+```
+
+The frontier plot connects non-dominated strategies with a dashed line:
+
+```{r frontier-plot}
+plot_frontier(det$frontier_status, palette = cea_palette("uw"))
+```
+
+Sequential ICERs along the frontier represent the cost per additional QALY of
+moving from one efficient strategy to the next more effective (and more costly)
+one:
+
+```{r icers}
+det$icers
+```
+
+## Tornado Diagram (One-Way Sensitivity Analysis)
+
+Deterministic sensitivity analysis (DSA) varies one parameter at a time
+between its lower and upper bounds while holding all others at base case. The
+tornado diagram ranks parameters by their impact on a chosen metric (Briggs
+et al., 2012).
+
+```{r tornado}
+df_tor <- m$default_params()
+df_tor <- df_tor[df_tor$include_tornado & (is.finite(df_tor$lower) | is.finite(df_tor$upper)), ]
+
+tor <- build_tornado_data(df_tor, det$pars, m,
+                          ref = "std", target = "t4",
+                          metric = "INB", wtp = 100000)
+
+plot_tornado(tor, base_val = unique(tor$base)[1],
+             metric_label = "INB (t4 vs std)",
+             title = "One-Way Sensitivity: t4 vs std")
+```
+
+Parameters at the top of the tornado have the largest influence on the
+decision. The two colors represent the lower and upper bounds of each
+parameter --- if both bars extend in the same direction, the parameter has a
+monotone effect on the metric.
+
+## Threshold Analysis
+
+Threshold analysis identifies the parameter value at which the decision
+changes --- where ICER equals WTP, or equivalently, where INB crosses zero
+(Fenwick et al., 2006).
+
+```{r threshold}
+thr <- threshold_analysis(m, det$pars, param_name = "drug_t4",
+                          ref = "std", target = "t4",
+                          range_min = 0, range_max = 5000,
+                          n_points = 50, wtp = 100000, mode = "inb")
+
+cat("Threshold drug cost:", round(thr$threshold, 2))
+```
+
+```{r threshold-plot}
+plot_threshold(thr$grid, thr$threshold, param_name = "drug_t4",
+               wtp = 100000, mode = "inb")
+```
+
+The threshold value tells the decision-maker the maximum drug cost at which
+the intervention remains cost-effective.
+
+## Discounting
+
+Discounting reflects time preference --- a QALY gained today is worth more
+than one gained in the future. Most HTA guidelines recommend 3% annual
+discounting for both costs and health outcomes (Weinstein et al., 1996;
+NICE, 2022).
+
+The bundled models include `d_cost` and `d_qaly` parameters (default 3%).
+Compare discounted vs. undiscounted results:
+
+```{r discounting}
+params_no_disc <- m$default_params()
+params_no_disc$base[params_no_disc$name == "d_cost"] <- 0
+params_no_disc$base[params_no_disc$name == "d_qaly"] <- 0
+
+det_no <- run_deterministic(m, params_no_disc, wtp = 100000)
+
+comparison <- data.frame(
+  Scenario = c("3% discounting", "No discounting"),
+  Cost_std = c(det$table$Cost[det$table$Strategy == "std"],
+               det_no$table$Cost[det_no$table$Strategy == "std"]),
+  QALY_std = c(det$table$QALY[det$table$Strategy == "std"],
+               det_no$table$QALY[det_no$table$Strategy == "std"])
+)
+comparison
+```
+
+`cea_discount_weights()` generates the per-cycle discount vector used
+internally:
+
+```{r discount-weights}
+# 10 annual cycles at 3%
+w <- cea_discount_weights(10, rate = 0.03, cycle_length = 1)
+round(w, 4)
+```
+
+## Health Checks
+
+Before running analyses, validate the model and parameters:
+
+```{r health}
+health <- validate_params_and_model(m, m$default_params())
+health[, c("check", "status")]
+```
+
+This checks parameter table completeness, distribution validity, bounds
+consistency, and whether each strategy simulates successfully with finite
+cost and QALY.
+
+## References
+
+- Alarid-Escudero, F., et al. (2019). A Tutorial on Time-Dependent Cohort
+  State-Transition Models in R Using a Cost-Effectiveness Analysis Example.
+  *Medical Decision Making*, 43(1), 21-41.
+- Briggs, A. H., Claxton, K., & Sculpher, M. J. (2006). *Decision Modelling
+  for Health Economic Evaluation*. Oxford University Press.
+- Drummond, M. F., et al. (2015). *Methods for the Economic Evaluation of
+  Health Care Programmes* (4th ed.). Oxford University Press.
+- Fenwick, E., O'Brien, B. J., & Briggs, A. (2004). Cost-effectiveness
+  acceptability curves --- facts, fallacies and frequently asked questions.
+  *Health Economics*, 13(5), 405-415.
+- NICE (2022). *NICE Health Technology Evaluations: The Manual*. National
+  Institute for Health and Care Excellence.
+- Stinnett, A. A., & Mullahy, J. (1998). Net Health Benefits: A New
+  Framework for the Analysis of Uncertainty in Cost-Effectiveness Analysis.
+  *Medical Decision Making*, 18(2 Suppl), S68-S80.
+- Weinstein, M. C., et al. (1996). Recommendations of the Panel on
+  Cost-Effectiveness in Health and Medicine. *JAMA*, 276(15), 1253-1258.

@@ -1,0 +1,166 @@
+---
+title: "Probabilistic Sensitivity Analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Probabilistic Sensitivity Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+This vignette covers probabilistic sensitivity analysis (PSA), including
+parameter sampling, the cost-effectiveness plane, the cost-effectiveness
+acceptability curve (CEAC), and expected loss curves.
+
+## Why PSA?
+
+Deterministic sensitivity analysis varies one parameter at a time, but real
+uncertainty is joint --- multiple parameters are uncertain simultaneously.
+PSA propagates this joint uncertainty through the model by sampling all
+parameters from their distributions and re-running the model thousands of
+times (Claxton et al., 2005; Briggs et al., 2006).
+
+Each PSA iteration produces a cost-QALY pair per strategy. The collection of
+iterations maps out the joint distribution of incremental costs and effects.
+
+## Parameter Distributions
+
+ShinyCEA supports 7 distributions for PSA sampling. The choice depends on the
+parameter's domain and the available evidence:
+
+| Distribution | Domain | Typical use | Parameterized from |
+|:------------|:-------|:-----------|:-------------------|
+| Beta | [0, 1] | Probabilities, utilities | Mean + 95% CI |
+| Gamma | [0, Inf) | Costs | Mean + 95% CI |
+| Log-normal | (0, Inf) | Hazard ratios, relative risks | Mean + 95% CI |
+| Normal | (-Inf, Inf) | Treatment effects (unbounded) | Mean + 95% CI |
+| Uniform | [a, b] | Ranges with no central tendency | Lower, upper |
+| Triangular | [a, b] | Expert elicitation (mode + bounds) | Lower, mode, upper |
+| PERT | [a, b] | Smoother than triangular | Lower, mode, upper |
+
+The `mean`, `lower`, and `upper` columns in the parameter table define the
+distribution. ShinyCEA uses method-of-moments matching to derive the shape
+parameters internally --- you don't need to specify alpha/beta or shape/rate
+directly (Briggs et al., 2006, Ch. 4).
+
+## Running PSA
+
+```{r psa}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+set.seed(20250605)
+psa <- run_psa(m, m$default_params(), n_sim = 1000)
+cat("Iterations used:", psa$used, "| Dropped:", psa$dropped)
+```
+
+Dropped iterations are those where the model returned non-finite values for
+at least one strategy. A high drop rate indicates parameter ranges that
+produce impossible model states.
+
+## Cost-Effectiveness Plane
+
+The CE plane plots incremental costs ($\Delta C$) against incremental QALYs
+($\Delta E$) for each PSA iteration, relative to the reference strategy.
+The WTP threshold appears as a diagonal line --- points below it are
+cost-effective (Fenwick et al., 2004).
+
+```{r ce-plane}
+det <- run_deterministic(m, m$default_params(), wtp = 100000)
+ref <- det$ref
+
+inc_list <- lapply(setdiff(m$info()$strategies, ref), function(s) {
+  data.frame(
+    strategy = s,
+    inc_qaly = psa$results[[paste0(s, ".q")]] - psa$results[[paste0(ref, ".q")]],
+    inc_cost = psa$results[[paste0(s, ".cost")]] - psa$results[[paste0(ref, ".cost")]]
+  )
+})
+inc_df <- do.call(rbind, inc_list)
+plot_ce_plane(inc_df, wtp = 100000)
+```
+
+Points in the **southeast quadrant** (more effective, less costly) represent
+iterations where the intervention dominates. Points in the **northwest**
+quadrant represent iterations where the intervention is dominated.
+
+## PSA Summary Table
+
+```{r psa-summary}
+summ <- build_psa_summary(psa$results, m$info()$strategies, wtp = 100000)
+summ
+```
+
+Each cell shows the mean with 95% credible interval from the PSA iterations.
+
+## Cost-Effectiveness Acceptability Curve (CEAC)
+
+The CEAC shows, for each WTP threshold, the probability that each strategy
+has the highest NMB. It synthesizes the full PSA into a decision-relevant
+summary (Fenwick et al., 2004; Lothgren & Zethraeus, 2000).
+
+```{r ceac}
+ceac <- compute_ceac(psa$results, m$info()$strategies,
+                     wtp_max = 200000, wtp_step = 2000)
+plot_ceac(ceac)
+```
+
+At low WTP, the cheapest strategy tends to be optimal. As WTP increases,
+more effective (and costly) strategies become preferred. The crossing points
+indicate where the optimal strategy switches.
+
+**Limitation of CEAC:** The probability of being cost-effective does not
+account for the *magnitude* of the loss from choosing the wrong strategy.
+A strategy can have a 51% probability of being optimal while the expected
+loss from choosing it is large. The expected loss curve addresses this.
+
+## Expected Loss
+
+Expected loss (also called expected opportunity loss) measures, for each
+strategy at each WTP, the average monetary loss compared to perfect
+information. The optimal strategy is the one that **minimizes expected
+loss**, which is equivalent to maximizing expected NMB but also conveys the
+magnitude of decision uncertainty (Alarid-Escudero et al., 2019).
+
+$$\text{EL}_s(\lambda) = \frac{1}{N} \sum_{i=1}^{N} \left[ \max_j \text{NMB}_{ij}(\lambda) - \text{NMB}_{is}(\lambda) \right]$$
+
+The minimum expected loss across strategies equals the EVPI.
+
+```{r expected-loss}
+el <- compute_expected_loss(psa$results, m$info()$strategies,
+                            wtp_max = 200000, wtp_step = 2000)
+plot_expected_loss(el)
+```
+
+Compared to the CEAC:
+
+- CEAC shows the *probability* of being optimal (binary: best or not).
+- Expected loss shows the *magnitude* of the wrong decision (continuous: how much you lose).
+
+When two strategies have similar probability of being optimal (~50/50), the
+expected loss reveals which one has a smaller penalty when it's wrong.
+
+## PSA Parameter Draws
+
+Inspecting the distributions of parameter draws helps verify that the
+sampling is working as intended:
+
+```{r draws}
+head(psa$draws[, 1:5], 5)
+```
+
+## References
+
+- Alarid-Escudero, F., et al. (2019). A Tutorial on Time-Dependent Cohort
+  State-Transition Models in R. *Medical Decision Making*, 43(1), 21-41.
+- Briggs, A. H., Claxton, K., & Sculpher, M. J. (2006). *Decision Modelling
+  for Health Economic Evaluation*. Oxford University Press.
+- Claxton, K., et al. (2005). Probabilistic sensitivity analysis for NICE
+  technology assessment. *Health Economics*, 14(4), 339-347.
+- Fenwick, E., O'Brien, B. J., & Briggs, A. (2004). Cost-effectiveness
+  acceptability curves. *Health Economics*, 13(5), 405-415.
+- Lothgren, M., & Zethraeus, N. (2000). Definition, interpretation and
+  calculation of cost-effectiveness acceptability curves. *Health Economics*,
+  9(7), 623-630.

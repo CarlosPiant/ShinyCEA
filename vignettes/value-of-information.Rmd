@@ -1,0 +1,178 @@
+---
+title: "Value of Information Analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Value of Information Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+Value of Information (VOI) analysis answers a fundamental question in health
+technology assessment: **is it worth conducting more research?** If the
+expected value of resolving uncertainty exceeds the cost of a study, the
+research is worthwhile. This vignette covers EVPI and EVPPI using the
+Sick-Sicker model.
+
+## Conceptual Framework
+
+Decision-making under uncertainty involves choosing a strategy based on
+current evidence. With **perfect information**, you would know the true
+parameter values and always choose the optimal strategy. The difference
+between the expected payoff with perfect information and the expected payoff
+with current information is the **Expected Value of Perfect Information
+(EVPI)** (Claxton, 1999; Briggs et al., 2006).
+
+$$\text{EVPI}(\lambda) = E_\theta\left[\max_s \text{NMB}_s(\theta, \lambda)\right] - \max_s E_\theta\left[\text{NMB}_s(\theta, \lambda)\right]$$
+
+- The first term is what you'd gain if you could observe the true parameters
+  $\theta$ before deciding (perfect information).
+- The second term is the best you can do with current information (choose the
+  strategy with the highest *expected* NMB).
+- EVPI is always non-negative and equals zero when there is no decision
+  uncertainty.
+
+## Setup
+
+```{r load}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+set.seed(20250605)
+psa <- run_psa(m, m$default_params(), n_sim = 2000)
+det <- run_deterministic(m, m$default_params(), wtp = 100000)
+```
+
+## EVPI
+
+EVPI is computed across a grid of WTP thresholds because the value of
+information depends on how much the decision-maker is willing to pay per
+QALY:
+
+```{r evpi}
+evpi <- compute_evpi(psa$results, m$info()$strategies,
+                     wtp_max = 300000, wtp_step = 2000)
+plot_evpi(evpi)
+```
+
+**Interpretation:** EVPI is highest where decision uncertainty is greatest ---
+typically near the WTP threshold where the optimal strategy switches. At very
+low or very high WTP, one strategy clearly dominates and perfect information
+has little value.
+
+To convert EVPI to a population-level estimate, multiply by the number of
+patients who would benefit from the decision over the relevant time horizon:
+
+```{r evpi-pop, eval = FALSE}
+# Example: 50,000 patients over 10 years, 3% discount
+population_evpi <- evpi$EVPI * 50000 * sum(cea_discount_weights(10, 0.03, 1))
+```
+
+## EVPPI
+
+While EVPI caps the total value of research, the **Expected Value of Partial
+Perfect Information (EVPPI)** identifies *which parameters* drive the most
+decision uncertainty. EVPPI for parameter $\phi$ is (Brennan et al., 2007):
+
+$$\text{EVPPI}_\phi(\lambda) = E_\phi\left[\max_s E_{\theta|\phi}\left[\text{NMB}_s(\theta, \lambda)\right]\right] - \max_s E_\theta\left[\text{NMB}_s(\theta, \lambda)\right]$$
+
+This asks: if you could learn the true value of $\phi$ (but nothing else),
+how much would that improve your decision?
+
+ShinyCEA estimates EVPPI using a non-parametric regression approach (Strong
+et al., 2014; Sadatsafavi et al., 2013). For each parameter, a LOESS
+regression of strategy-specific NMB on that parameter's PSA draws approximates
+the conditional expectation $E_{\theta|\phi}[\text{NMB}_s]$.
+
+```{r evppi}
+evppi <- compute_evppi(psa$results, psa$draws, m$info()$strategies,
+                       wtp = 100000)
+plot_evppi(evppi, top_n = 10)
+```
+
+**Interpretation:** Parameters at the top of the bar chart are the highest
+priority for future research. A parameter with near-zero EVPPI is already
+well-enough characterized for this decision --- no amount of additional data
+on it would change the conclusion.
+
+The EVPPI table shows exact values:
+
+```{r evppi-table}
+head(evppi, 10)
+```
+
+## Connecting EVPI, EVPPI, and Expected Loss
+
+These three VOI metrics are closely related:
+
+| Metric | Question answered | Level |
+|:-------|:-----------------|:------|
+| **EVPI** | What is the maximum value of *any* research? | Overall |
+| **EVPPI** | Which *specific parameters* are worth studying? | Per-parameter |
+| **Expected Loss** | Which *strategy* should I choose right now? | Per-strategy |
+
+The minimum expected loss across strategies at a given WTP equals the EVPI:
+
+```{r el-evpi}
+el <- compute_expected_loss(psa$results, m$info()$strategies,
+                            wtp_max = 200000, wtp_step = 50000)
+
+# At WTP = 100,000
+el_at_100k <- el[el$WTP == 100000, ]
+evpi_at_100k <- evpi$EVPI[evpi$WTP == 100000]
+
+cat("Min expected loss at WTP=100k:", round(min(el_at_100k$Expected_Loss), 2), "\n")
+cat("EVPI at WTP=100k:             ", round(evpi_at_100k, 2), "\n")
+```
+
+```{r el-plot}
+plot_expected_loss(el)
+```
+
+## Practical Guidance
+
+1. **Run PSA first** with enough iterations (1,000--10,000). VOI estimates
+   are noisy with too few draws.
+2. **Check EVPI** to see if there is any decision uncertainty worth resolving.
+   If EVPI is near zero at the relevant WTP, no further research is needed.
+3. **Check EVPPI** to prioritize research. Focus data collection on the
+   top-ranked parameters.
+4. **Compare EVPPI to study costs.** If the population-level EVPPI for a
+   parameter exceeds the cost of a trial to resolve it, the trial has
+   positive expected net benefit of sampling (Claxton & Posnett, 1996).
+
+## Limitations
+
+- EVPPI computed via LOESS is an approximation. For more precise estimates,
+  consider the GAM-based method of Strong et al. (2014) or the INLA-based
+  approach of Heath et al. (2020).
+- Single-parameter EVPPI may underestimate the value of studying correlated
+  parameters jointly. Group EVPPI addresses this but is computationally
+  more intensive.
+
+## References
+
+- Brennan, A., Kharroubi, S., O'Hagan, A., & Chilcott, J. (2007). Calculating
+  partial expected value of perfect information via Monte Carlo sampling
+  algorithms. *Medical Decision Making*, 27(4), 448-470.
+- Briggs, A. H., Claxton, K., & Sculpher, M. J. (2006). *Decision Modelling
+  for Health Economic Evaluation*. Oxford University Press.
+- Claxton, K. (1999). The irrelevance of inference: a decision-making approach
+  to the stochastic evaluation of health care technologies. *Journal of Health
+  Economics*, 18(3), 341-364.
+- Claxton, K., & Posnett, J. (1996). An economic approach to clinical trial
+  design and research priority-setting. *Health Economics*, 5(6), 513-524.
+- Heath, A., Manolopoulou, I., & Baio, G. (2020). Estimating the expected
+  value of partial perfect information in health economic evaluations using
+  integrated nested Laplace approximation. *Statistics in Medicine*, 39(27),
+  4062-4080.
+- Sadatsafavi, M., Bansback, N., Zafari, Z., Najafzadeh, M., & Marra, C.
+  (2013). Need for speed: an efficient algorithm for calculation of
+  single-parameter expected value of partial perfect information. *Value in
+  Health*, 16(2), 438-448.
+- Strong, M., Oakley, J. E., & Brennan, A. (2014). Estimating multiparameter
+  partial expected value of perfect information from a probabilistic
+  sensitivity analysis sample: a nonparametric regression approach. *Medical
+  Decision Making*, 34(3), 311-326.

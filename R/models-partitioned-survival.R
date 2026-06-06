@@ -44,7 +44,9 @@ cea_partitioned_survival <- function() {
       cea_param("drug_t2", 1800, 1300, 2400, distribution = "gamma"),
       cea_param("drug_t3", 1200, 800, 1600, distribution = "gamma"),
       cea_param("drug_t4", 1700, 1200, 2200, distribution = "gamma"),
-      cea_param("drug_t5", 2000, 1500, 2600, distribution = "gamma")
+      cea_param("drug_t5", 2000, 1500, 2600, distribution = "gamma"),
+      cea_param("d_cost", 0.03, 0, 0.08, distribution = "fixed", include_psa = FALSE, include_tornado = TRUE),
+      cea_param("d_qaly", 0.03, 0, 0.08, distribution = "fixed", include_psa = FALSE, include_tornado = TRUE)
     ))
   }
 
@@ -81,8 +83,13 @@ cea_partitioned_survival <- function() {
     c_Prog <- as.numeric(.nc(pars[["c_Prog"]], 2800))
     drug <- as.numeric(.nc(pars[[paste0("drug_", strategy)]], 0))
 
-    qaly <- sum(PF * u_PF + Prog * u_Prog) * cl
-    cost <- sum(PF * (c_PF + drug) + Prog * (c_Prog + drug)) * cl
+    d_c <- as.numeric(.nc(pars[["d_cost"]], 0.03))
+    d_q <- as.numeric(.nc(pars[["d_qaly"]], 0.03))
+    n_t <- length(tgrid)
+    w_c <- cea_discount_weights(n_t, rate = d_c, cycle_length = cl, first_cycle = 0L)
+    w_q <- cea_discount_weights(n_t, rate = d_q, cycle_length = cl, first_cycle = 0L)
+    qaly <- sum((PF * u_PF + Prog * u_Prog) * w_q) * cl
+    cost <- sum((PF * (c_PF + drug) + Prog * (c_Prog + drug)) * w_c) * cl
 
     survival <- rbind(
       data.frame(time = tgrid, surv = as.numeric(S_os), curve = "OS", stringsAsFactors = FALSE),

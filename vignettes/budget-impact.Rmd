@@ -1,0 +1,190 @@
+---
+title: "Budget Impact Analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Budget Impact Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+Budget impact analysis (BIA) estimates the financial consequences of adopting
+a new health technology from the payer's perspective. While CEA asks "is it
+worth the money?", BIA asks "can we afford it?" This vignette demonstrates
+BIA following ISPOR Good Practices (Sullivan et al., 2014; Mauskopf et al.,
+2017).
+
+## BIA vs. CEA
+
+| Aspect | CEA | BIA |
+|:-------|:----|:----|
+| Question | Is it cost-effective? | What is the total cost to the payer? |
+| Perspective | Societal or payer | Payer (budget holder) |
+| Time horizon | Lifetime (often) | 3--5 years (short-term) |
+| Discounting | Yes (3%) | Often undiscounted (short horizon) |
+| Output | ICER, NMB | Total incremental cost by year |
+| Required by | NICE, CADTH, PBAC | NICE, CADTH, PBAC (alongside CEA) |
+
+BIA complements CEA --- a treatment can be cost-effective (good ICER) but
+have a large budget impact if the eligible population is large or the
+per-patient cost is high.
+
+## Framework
+
+The ISPOR BIA framework has five key inputs:
+
+1. **Eligible population** --- number of patients who would receive treatment
+2. **Current market mix** --- how patients are currently distributed across
+   treatments
+3. **New market mix** --- projected distribution after adoption of the new
+   technology
+4. **Per-patient costs** --- from the CEA model
+5. **Market uptake trajectory** --- how quickly adoption occurs
+
+Budget impact in year $t$ is:
+
+$$\text{BI}_t = \sum_s N_t \cdot m_{s,t}^{\text{new}} \cdot c_s - \sum_s N_t \cdot m_{s,t}^{\text{current}} \cdot c_s$$
+
+where $N_t$ is the population in year $t$, $m_{s,t}$ is the market share of
+strategy $s$, and $c_s$ is the per-patient cost.
+
+## Setup
+
+```{r load}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+strategies <- m$info()$strategies
+cat("Strategies:", paste(strategies, collapse = ", "))
+```
+
+## Defining Market Mixes
+
+Suppose the current market is 100% standard of care:
+
+```{r current-mix}
+current_mix <- c(std = 1, t1 = 0, t2 = 0, t3 = 0, t4 = 0)
+```
+
+And the new scenario shifts 40% of patients to t4 (the most effective
+strategy from our CEA):
+
+```{r new-mix}
+new_final <- c(std = 0.60, t1 = 0, t2 = 0, t3 = 0, t4 = 0.40)
+```
+
+## Linear Uptake
+
+In practice, adoption doesn't happen overnight. `linear_uptake()` creates a
+gradual transition from the current mix to the target mix over the projection
+period:
+
+```{r uptake}
+uptake <- linear_uptake(current_mix, new_final, years = 5)
+
+# Year 1: mostly still current
+round(uptake[[1]], 2)
+
+# Year 3: halfway
+round(uptake[[3]], 2)
+
+# Year 5: fully transitioned
+round(uptake[[5]], 2)
+```
+
+## Running the BIA
+
+```{r bia}
+bia <- run_bia(m, m$default_params(),
+               population = 50000,
+               current_mix = current_mix,
+               new_mix = uptake,
+               years = 5,
+               annual_growth = 0.02)
+```
+
+### Annual Impact
+
+```{r impact-table}
+bia$impact
+```
+
+```{r total}
+cat("Total 5-year budget impact: $",
+    formatC(round(bia$total_impact), format = "f", big.mark = ",", digits = 0))
+```
+
+### Visualizations
+
+The cost comparison shows total spending under each scenario by year:
+
+```{r cost-plot}
+plot_bia(bia$impact, palette = cea_palette("classic"))
+```
+
+The waterfall chart highlights the annual incremental budget impact, with
+positive values (additional cost) in red and savings in blue:
+
+```{r waterfall}
+plot_bia_waterfall(bia$impact, palette = cea_palette("classic"))
+```
+
+### Detailed Breakdown
+
+The annual table shows per-strategy patient counts and costs:
+
+```{r annual}
+head(bia$annual, 10)
+```
+
+## Sensitivity in BIA
+
+Key parameters to vary in BIA sensitivity analysis:
+
+- **Population size** --- often the most influential parameter
+- **Market uptake rate** --- faster adoption = larger near-term impact
+- **Per-patient costs** --- use scenarios for high/low pricing
+- **Population growth** --- relevant for growing disease areas
+
+Use the scenario manager to compare BIA under different assumptions:
+
+```{r bia-scenarios}
+# Scenario: faster uptake (80% by year 5)
+fast_uptake <- linear_uptake(
+  current_mix,
+  c(std = 0.20, t1 = 0, t2 = 0, t3 = 0, t4 = 0.80),
+  years = 5
+)
+
+bia_fast <- run_bia(m, m$default_params(),
+                    population = 50000,
+                    current_mix = current_mix,
+                    new_mix = fast_uptake,
+                    years = 5)
+
+cat("Base uptake (40%):", formatC(round(bia$total_impact), big.mark = ","), "\n")
+cat("Fast uptake (80%):", formatC(round(bia_fast$total_impact), big.mark = ","), "\n")
+```
+
+## Interpretation
+
+A positive budget impact means the new scenario costs more than the current
+one. This does not mean the technology is a bad investment --- it may be
+highly cost-effective (low ICER) while still requiring a substantial budget.
+Decision-makers use BIA to:
+
+1. **Plan budgets** --- allocate funds for the expected cost increase
+2. **Negotiate prices** --- understand the price at which budget impact
+   becomes manageable
+3. **Phase adoption** --- design uptake curves that spread the cost over time
+
+## References
+
+- Mauskopf, J., et al. (2017). Budget-impact analysis of health care
+  interventions: a practical guide. *Expert Review of Pharmacoeconomics &
+  Outcomes Research*, 17(6), 547-558.
+- Sullivan, S. D., et al. (2014). Budget impact analysis --- principles of
+  good practice: report of the ISPOR 2012 Budget Impact Analysis Good Practice
+  II Task Force. *Value in Health*, 17(1), 5-14.

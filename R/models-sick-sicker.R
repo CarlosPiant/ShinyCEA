@@ -44,7 +44,9 @@ cea_sick_sicker <- function() {
       cea_param("drug_t1", 400, 200, 600, distribution = "gamma"),
       cea_param("drug_t2", 600, 300, 900, distribution = "gamma"),
       cea_param("drug_t3", 300, 150, 500, distribution = "gamma"),
-      cea_param("drug_t4", 700, 400, 1000, distribution = "gamma")
+      cea_param("drug_t4", 700, 400, 1000, distribution = "gamma"),
+      cea_param("d_cost", 0.03, 0, 0.08, distribution = "fixed", include_psa = FALSE, include_tornado = TRUE),
+      cea_param("d_qaly", 0.03, 0, 0.08, distribution = "fixed", include_psa = FALSE, include_tornado = TRUE)
     ))
   }
 
@@ -97,8 +99,12 @@ cea_sick_sicker <- function() {
     cost_vec <- c(c_H + drug, c_S1 + drug, c_S2 + drug, 0)
 
     occ <- trace[-1, , drop = FALSE]
-    qaly <- sum(occ %*% util_vec) * cl
-    cost <- sum(occ %*% cost_vec) * cl
+    d_c <- as.numeric(.null_coalesce(pars[["d_cost"]], 0.03))
+    d_q <- as.numeric(.null_coalesce(pars[["d_qaly"]], 0.03))
+    w_c <- cea_discount_weights(n_cycles, rate = d_c, cycle_length = cl)
+    w_q <- cea_discount_weights(n_cycles, rate = d_q, cycle_length = cl)
+    qaly <- sum((occ %*% util_vec) * w_q) * cl
+    cost <- sum((occ %*% cost_vec) * w_c) * cl
 
     time <- seq(0, n_cycles) * cl
     os <- 1 - trace[, "D"]

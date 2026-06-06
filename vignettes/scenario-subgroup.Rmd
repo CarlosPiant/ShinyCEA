@@ -1,0 +1,233 @@
+---
+title: "Scenario and Subgroup Analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Scenario and Subgroup Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+This vignette covers two related analyses that test the robustness of CEA
+conclusions: **scenario analysis** (varying assumptions about the model) and
+**subgroup analysis** (varying the patient population). Both are required by
+most HTA bodies to assess the generalizability of results (NICE, 2022;
+CADTH, 2017).
+
+## Part 1: Scenario Analysis
+
+### What is Scenario Analysis?
+
+Scenario analysis (also called structural sensitivity analysis) tests whether
+conclusions change under alternative assumptions about model inputs. Unlike
+one-way DSA (which varies one parameter at a time), scenarios can change
+multiple parameters simultaneously to represent coherent alternative
+assumptions (Briggs et al., 2012).
+
+Common scenarios include:
+
+| Scenario | What changes |
+|:---------|:------------|
+| Base case | Nothing (reference point) |
+| No discounting | d_cost = 0, d_qaly = 0 |
+| Societal perspective | Include productivity costs |
+| Conservative efficacy | Use upper CI bound for hazard ratios |
+| Different time horizon | Shorter (5yr) or longer (lifetime) |
+| Alternative pricing | Drug costs from different source |
+
+### Running Scenarios
+
+```{r scenarios}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+
+scenarios <- list(
+  "Base case" = list(),
+  "No discounting" = list(d_cost = 0, d_qaly = 0),
+  "Short horizon (5yr)" = list(time_horizon = 5),
+  "Conservative RR" = list(rr_prog_t4 = 0.85, rr_death_t4 = 0.95),
+  "Low drug cost" = list(drug_t4 = 350),
+  "High drug cost" = list(drug_t4 = 1400)
+)
+
+sc <- run_scenarios(m, m$default_params(), scenarios, wtp = 100000)
+```
+
+### Results Table
+
+The full results show every strategy under every scenario:
+
+```{r sc-table}
+# Show t4 (the base-case optimal) across scenarios
+sc_t4 <- sc[sc$Strategy == "t4", c("Scenario", "Cost", "QALY", "NMB", "ICER_vsRef")]
+sc_t4
+```
+
+### Optimal Strategy Summary
+
+`summarize_scenarios()` picks the strategy with the highest NMB in each
+scenario:
+
+```{r sc-summary}
+summarize_scenarios(sc)
+```
+
+If the optimal strategy changes across plausible scenarios, the decision is
+**sensitive to structural assumptions** --- a signal that further analysis
+(or caution in the recommendation) is warranted.
+
+### Forest Plot
+
+The forest plot visualizes one strategy's ICER or NMB across all scenarios
+on a single axis, making it easy to see where the strategy is or isn't
+cost-effective:
+
+```{r forest-icer}
+sc_ref <- run_scenarios(m, m$default_params(), scenarios,
+                        wtp = 100000, ref_strategy = "std")
+plot_scenario_forest(sc_ref, target = "t4", metric = "ICER", wtp = 100000)
+```
+
+Dots to the left of the dashed WTP line ($100,000/QALY) are cost-effective.
+Dots to the right are not.
+
+Switch to NMB for a complementary view:
+
+```{r forest-nmb}
+plot_scenario_forest(sc_ref, target = "t4", metric = "NMB", wtp = 100000)
+```
+
+Positive NMB = cost-effective; negative NMB = not cost-effective.
+
+---
+
+## Part 2: Subgroup Analysis
+
+### What is Subgroup Analysis?
+
+Subgroup analysis examines whether the cost-effectiveness of an intervention
+varies across patient subpopulations defined by baseline characteristics
+(age, sex, risk level, disease severity). This is critical because:
+
+1. The **average ICER** may mask heterogeneity --- a treatment can be
+   cost-effective in high-risk patients but not in low-risk patients.
+2. HTA bodies increasingly require **equity-relevant subgroup analyses**
+   (NICE, 2022).
+3. Subgroup results inform **targeted treatment recommendations** and
+   coverage decisions.
+
+### Defining Subgroups
+
+Each subgroup is defined by parameter overrides that reflect the subgroup's
+characteristics. For the Sick-Sicker model, we can vary baseline transition
+probabilities and utilities:
+
+```{r subgroups}
+subgroups <- list(
+  "Overall population" = list(),
+  "Young adults (low risk)" = list(
+    p_HS_std = 0.02,    # lower progression
+    p_HD_std = 0.002,   # lower background mortality
+    u_H = 0.95          # higher baseline utility
+  ),
+  "Middle-aged (moderate risk)" = list(
+    p_HS_std = 0.05,
+    p_HD_std = 0.005,
+    u_H = 0.88
+  ),
+  "Elderly (high risk)" = list(
+    p_HS_std = 0.10,    # faster progression
+    p_HD_std = 0.015,   # higher background mortality
+    u_H = 0.75,         # lower baseline utility
+    u_S1 = 0.55         # lower sick utility
+  ),
+  "Severe disease at baseline" = list(
+    p_S1S2_std = 0.15,  # faster progression to sicker
+    p_S2D_std = 0.12,   # higher mortality from sicker state
+    u_S2 = 0.35
+  )
+)
+```
+
+### Running the Analysis
+
+```{r run-subgroups}
+sg <- run_subgroups(m, m$default_params(), subgroups,
+                    target = "t4", ref = "std", wtp = 100000)
+sg[, c("Subgroup", "IncCost", "IncQALY", "ICER", "INB")]
+```
+
+### Subgroup Forest Plot (ICER)
+
+The forest plot displays the ICER of t4 vs. standard across all subgroups.
+Dots are colored by cost-effectiveness relative to the WTP threshold:
+
+```{r sg-forest-icer}
+plot_subgroup_forest(sg, metric = "ICER", wtp = 100000,
+                     palette = cea_palette("uw"))
+```
+
+### Subgroup Forest Plot (INB)
+
+The INB view is often more intuitive --- positive values mean
+cost-effective, and the magnitude shows how strongly:
+
+```{r sg-forest-inb}
+plot_subgroup_forest(sg, metric = "INB", wtp = 100000,
+                     palette = cea_palette("uw"))
+```
+
+### Interpreting Subgroup Results
+
+Key questions to ask:
+
+1. **Does the direction change?** If the ICER crosses the WTP threshold in
+   some subgroups, the treatment may only be recommended for specific
+   populations.
+2. **Is heterogeneity clinically plausible?** Subgroup differences should
+   align with biological or clinical reasoning.
+3. **How large is the subgroup?** A favorable ICER in a small subgroup may
+   not influence the overall recommendation.
+
+### Combining with PSA
+
+For a complete picture, run PSA within each subgroup to quantify uncertainty
+around the subgroup-specific ICERs. This can be done by modifying the
+parameter table and calling `run_psa()`:
+
+```{r subgroup-psa, eval = FALSE}
+# Example: PSA for the elderly subgroup
+elderly_params <- m$default_params()
+elderly_params$base[elderly_params$name == "p_HS_std"] <- 0.10
+elderly_params$base[elderly_params$name == "p_HD_std"] <- 0.015
+elderly_params$base[elderly_params$name == "u_H"] <- 0.75
+elderly_params$mean <- elderly_params$base  # update means too
+
+psa_elderly <- run_psa(m, elderly_params, n_sim = 1000)
+ceac_elderly <- compute_ceac(psa_elderly$results, m$info()$strategies)
+plot_ceac(ceac_elderly)
+```
+
+## Reporting Checklist
+
+Per ISPOR and NICE guidelines, scenario and subgroup analyses should report:
+
+- [ ] **Justification** for each scenario/subgroup (clinical rationale)
+- [ ] **Parameter values** used in each scenario/subgroup
+- [ ] **Base case** included as a reference point
+- [ ] **ICER and/or NMB** for each scenario/subgroup
+- [ ] **Forest plot** showing results across scenarios/subgroups
+- [ ] **Discussion** of which findings are robust and which are sensitive
+
+## References
+
+- Briggs, A. H., Claxton, K., & Sculpher, M. J. (2006). *Decision Modelling
+  for Health Economic Evaluation*. Oxford University Press.
+- CADTH (2017). *Guidelines for the Economic Evaluation of Health
+  Technologies: Canada* (4th ed.). Canadian Agency for Drugs and Technologies
+  in Health.
+- NICE (2022). *NICE Health Technology Evaluations: The Manual*. National
+  Institute for Health and Care Excellence.

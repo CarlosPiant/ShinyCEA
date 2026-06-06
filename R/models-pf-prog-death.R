@@ -45,7 +45,9 @@ cea_pf_prog_death <- function() {
       cea_param("drug_t2", 1200, 800, 1500, distribution = "gamma"),
       cea_param("drug_t3", 700, 400, 900, distribution = "gamma"),
       cea_param("drug_t4", 1300, 900, 1700, distribution = "gamma"),
-      cea_param("drug_t5", 1500, 1100, 2000, distribution = "gamma")
+      cea_param("drug_t5", 1500, 1100, 2000, distribution = "gamma"),
+      cea_param("d_cost", 0.03, 0, 0.08, distribution = "fixed", include_psa = FALSE, include_tornado = TRUE),
+      cea_param("d_qaly", 0.03, 0, 0.08, distribution = "fixed", include_psa = FALSE, include_tornado = TRUE)
     ))
   }
 
@@ -92,8 +94,12 @@ cea_pf_prog_death <- function() {
     cost_vec <- c(c_PF + drug, c_Prog + drug, 0)
 
     occ <- trace[-1, , drop = FALSE]
-    qaly <- sum(occ %*% util_vec) * cl
-    cost <- sum(occ %*% cost_vec) * cl
+    d_c <- as.numeric(.nc(pars[["d_cost"]], 0.03))
+    d_q <- as.numeric(.nc(pars[["d_qaly"]], 0.03))
+    w_c <- cea_discount_weights(n_cycles, rate = d_c, cycle_length = cl)
+    w_q <- cea_discount_weights(n_cycles, rate = d_q, cycle_length = cl)
+    qaly <- sum((occ %*% util_vec) * w_q) * cl
+    cost <- sum((occ %*% cost_vec) * w_c) * cl
 
     time <- seq(0, n_cycles) * cl
     os <- 1 - trace[, "Death"]

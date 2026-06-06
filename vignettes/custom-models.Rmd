@@ -248,7 +248,53 @@ trace_data <- do.call(rbind, lapply(c("soc", "new_drug"), function(s) {
 plot_trace(trace_data, facet = TRUE)
 ```
 
-## Step 6: Generate a Report
+## Step 6: Value of Information
+
+```{r voi}
+evpi <- compute_evpi(psa$results, c("soc", "new_drug"), wtp_max = 100000)
+plot_evpi(evpi)
+```
+
+```{r expected-loss}
+el <- compute_expected_loss(psa$results, c("soc", "new_drug"), wtp_max = 100000)
+plot_expected_loss(el)
+```
+
+## Step 7: Scenario Analysis
+
+```{r scenarios}
+scenarios <- list(
+  "Base case" = list(),
+  "No discounting" = list(d_cost = 0, d_qaly = 0),
+  "High drug cost" = list(c_new_drug = 1000),
+  "Low efficacy" = list(rr_new_drug = 0.90)
+)
+sc <- run_scenarios(my_model, my_model$default_params(), scenarios, wtp = 50000)
+sc[, c("Scenario", "Strategy", "Cost", "QALY", "NMB")]
+```
+
+```{r scenario-summary}
+summarize_scenarios(sc)
+```
+
+## Step 8: Subgroup Analysis
+
+```{r subgroups}
+subgroups <- list(
+  "Overall" = list(),
+  "High risk" = list(p_event = 0.2),
+  "Low risk" = list(p_event = 0.05)
+)
+sg <- run_subgroups(my_model, my_model$default_params(), subgroups,
+                    target = "new_drug", ref = "soc", wtp = 50000)
+sg[, c("Subgroup", "IncCost", "IncQALY", "ICER", "INB")]
+```
+
+```{r subgroup-forest}
+plot_subgroup_forest(sg, metric = "ICER", wtp = 50000)
+```
+
+## Step 9: Generate a Report
 
 ```{r report, eval = FALSE}
 generate_cea_report(
@@ -268,7 +314,7 @@ generate_cea_report(
 )
 ```
 
-## Step 7: Launch the Shiny App
+## Step 10: Launch the Shiny App
 
 ```{r app, eval = FALSE}
 # Launch with just your model
