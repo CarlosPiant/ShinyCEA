@@ -1,0 +1,240 @@
+---
+title: "Automated Report Generation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Automated Report Generation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+set.seed(20250607)
+```
+
+ShinyCEA can generate comprehensive, publication-ready reports that
+combine all analyses --- deterministic CEA, PSA, VOI, scenarios,
+subgroups, BIA, and validation --- into a single Quarto document.
+The generated `.qmd` file is fully editable before final rendering
+to HTML, PDF, Word, or RevealJS slides.
+
+This vignette demonstrates the full pipeline from model definition
+to a complete HTA report.
+
+## The Reporting Pipeline
+
+```
+collect_cea_results()     # Deterministic + frontier + tornado
+collect_psa_results()     # PSA + CEAC + EVPI/EVPPI
+collect_bia_results()     # Budget impact
+       |
+create_cea_report()       # Write CEA section
+create_psa_appendix()     # Write PSA section
+create_bia_report()       # Write BIA section
+       |
+render_hta_report()       # Assemble all + render
+```
+
+## Quick Start: One-Command Report
+
+```{r quick, eval = FALSE}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+
+# Generate a complete report (Quarto .qmd file)
+render_hta_report(
+  m,
+  wtp = 100000,
+  n_psa = 1000,
+  scenarios = list(
+    "Base case" = list(),
+    "No discounting" = list(d_cost = 0, d_qaly = 0)
+  ),
+  title = "Sick-Sicker CEA Report",
+  author = "ShinyCEA",
+  format = "html",         # also: "pdf", "docx", "revealjs"
+  output_dir = "my_report",
+  render = TRUE             # set FALSE to edit .qmd first
+)
+```
+
+This produces `my_report/report.qmd` with all figures in `my_report/figures/`,
+and (if `render = TRUE`) the rendered HTML.
+
+## Step-by-Step: Building a Report Manually
+
+### 1. Collect Deterministic Results
+
+```{r collect-cea}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+
+cea <- collect_cea_results(m, m$default_params(), wtp = 100000)
+```
+
+The collected object contains formatted tables and ready-made plots:
+
+```{r tables}
+# Publication-ready base-case table
+cea$tables$base_case
+```
+
+```{r incremental}
+# Incremental comparison table
+cea$tables$incremental
+```
+
+```{r frontier}
+# Frontier plot
+cea$plots$frontier
+```
+
+### 2. Collect PSA Results
+
+```{r collect-psa}
+psa <- collect_psa_results(m, m$default_params(), cea$det,
+                           wtp = 100000, n_psa = 500)
+```
+
+```{r psa-table}
+psa$tables$psa_summary
+```
+
+```{r ceac}
+psa$plots$ceac
+```
+
+```{r evpi}
+psa$plots$evpi
+```
+
+### 3. Collect BIA Results
+
+```{r collect-bia}
+strats <- m$info()$strategies
+n <- length(strats)
+cur <- stats::setNames(rep(1/n, n), strats)
+new_mix <- cur
+new_mix["std"] <- 0
+new_mix["t4"] <- new_mix["t4"] + cur["std"]
+
+bia <- collect_bia_results(m, m$default_params(),
+                           population = 50000,
+                           current_mix = cur,
+                           new_mix = new_mix,
+                           years = 5)
+bia$plots$waterfall
+```
+
+### 4. Assemble the Report
+
+Each collector's output can be turned into Quarto markdown sections:
+
+```{r sections, eval = FALSE}
+# Each function returns character lines of markdown
+cea_lines <- create_cea_report(cea, output_dir = "report_figures")
+psa_lines <- create_psa_appendix(psa, output_dir = "report_figures")
+bia_lines <- create_bia_report(bia, output_dir = "report_figures")
+
+# Combine manually if you want custom ordering
+all_lines <- c(cea_lines, psa_lines, bia_lines)
+writeLines(all_lines, "custom_report.qmd")
+```
+
+Or use the master orchestrator to do it all at once:
+
+```{r master, eval = FALSE}
+render_hta_report(
+  m,
+  wtp = 100000,
+  n_psa = 1000,
+  scenarios = list(
+    "Base case" = list(),
+    "No discounting" = list(d_cost = 0, d_qaly = 0),
+    "High cost" = list(drug_t4 = 1400)
+  ),
+  subgroups = list(
+    "Overall" = list(),
+    "High risk" = list(p_HS_std = 0.08)
+  ),
+  bia_config = list(
+    population = 50000,
+    current_mix = cur,
+    new_mix = new_mix,
+    years = 5
+  ),
+  title = "Complete CEA: Sick-Sicker Model",
+  author = "Carlos Pineda",
+  format = "html",
+  output_dir = "full_report"
+)
+```
+
+## Output Formats
+
+| Format | Use case | Command |
+|:-------|:---------|:--------|
+| **HTML** | Interactive viewing, self-contained | `format = "html"` |
+| **PDF** | Formal submission (via Typst/LaTeX) | `format = "pdf"` |
+| **DOCX** | Word editing, track changes | `format = "docx"` |
+| **RevealJS** | Presentation slides | `format = "revealjs"` |
+
+### Presentation Mode (RevealJS)
+
+When `format = "revealjs"`, each section becomes a slide. This is
+ideal for presenting CEA results to committees:
+
+```{r slides, eval = FALSE}
+render_hta_report(
+  m, wtp = 100000, n_psa = 0,
+  format = "revealjs",
+  title = "CEA Results Presentation",
+  output_dir = "slides"
+)
+```
+
+## Editing Before Rendering
+
+The `.qmd` file is standard Quarto markdown. You can:
+
+- **Add narrative text** between sections
+- **Remove sections** you don't need
+- **Reorder sections** by moving blocks
+- **Change figure captions** and table labels
+- **Add citations** using a `.bib` file
+- **Apply custom themes** via the YAML header
+
+After editing, render manually:
+
+```bash
+quarto render my_report/report.qmd
+```
+
+## Report Contents
+
+The generated report includes these sections (each optional):
+
+| Section | Included when | Content |
+|:--------|:-------------|:--------|
+| Model Description | Always | Name, strategies, parameters, WTP |
+| Base-Case Results | Always | Cost/QALY/NMB table, frontier plot |
+| Incremental Analysis | Always | ICER table vs reference |
+| Tornado Diagram | Tornado params exist | One-way DSA |
+| Survival Curves | Model returns survival | OS/PFS curves |
+| PSA Summary | `n_psa > 0` | Mean (95% CI) table |
+| CE Plane | `n_psa > 0` | Scatter plot with WTP line |
+| CEAC | `n_psa > 0` | Acceptability curves |
+| Expected Loss | `n_psa > 0` | Opportunity loss curves |
+| EVPI | `n_psa > 0` | Value of information |
+| EVPPI | `n_psa > 0` + draws | Per-parameter VOI |
+| Scenario Analysis | `scenarios` provided | Multi-scenario table |
+| Subgroup Analysis | `subgroups` provided | Forest plot + table |
+| Budget Impact | `bia_config` provided | Annual table + waterfall |
+| Parameter Table | Always | Full parameter appendix |
+| Validation Summary | Always | Score + pass/warn/fail counts |
+
+## References
+
+- Husereau, D., et al. (2022). Consolidated Health Economic Evaluation
+  Reporting Standards 2022 (CHEERS 2022). *Value in Health*, 25(1), 3-9.
+- NICE (2022). *NICE Health Technology Evaluations: The Manual*.

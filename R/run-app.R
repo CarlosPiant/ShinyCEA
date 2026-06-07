@@ -39,7 +39,8 @@ run_cea_app <- function(..., models = NULL, launch.browser = TRUE) {
     model_list <- list(
       sick_sicker = cea_sick_sicker(),
       pf_prog_death = cea_pf_prog_death(),
-      ps_weibull = cea_partitioned_survival()
+      ps_weibull = cea_partitioned_survival(),
+      microsim = cea_microsim()
     )
   }
 

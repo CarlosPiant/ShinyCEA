@@ -1,0 +1,283 @@
+---
+title: "Modern Budget Impact Analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Modern Budget Impact Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+Budget impact analysis (BIA) estimates the financial consequences of adopting
+a new health technology from the payer's perspective. While CEA asks "is it
+worth the money?", BIA asks "can we afford it?" This vignette demonstrates
+ShinyCEA's modern BIA suite, which follows ISPOR BIA Good Practices
+(Sullivan et al., 2014; Mauskopf et al., 2017) with structured population
+modeling, uptake curves, cost decomposition, and scenario comparison.
+
+## The BIA Pipeline
+
+```
+define_population()       # 1. Who is eligible?
+       |
+define_market_shares()    # 2. Current vs new treatment mix
+       |
+define_uptake_curve()     # 3. How fast does adoption happen?
+       |
+define_cost_components()  # 4. What does each treatment cost?
+       |
+run_bia_modern()          # 5. Project the budget impact
+       |
+table_annual_budget()     # 6. Format for reporting
+plot_budget_impact()      # 7. Visualize
+scenario_bia()            # 8. Test assumptions
+```
+
+## 1. Define the Target Population
+
+```{r population}
+library(ShinyCEA)
+
+pop <- define_population(
+  total_population = 500000,    # health plan members
+  prevalence = 0.008,           # 0.8% disease prevalence
+  eligible_fraction = 0.75,     # 75% diagnosed and eligible
+  incident_annual = 150,        # 150 new cases/year
+  annual_growth = 0.02,         # 2% membership growth
+  mortality_rate = 0.05,        # 5% annual disease mortality
+  years = 5
+)
+
+print(pop)
+```
+
+The eligible patient pool changes each year based on:
+
+$$N_{t+1} = N_t \times (1 + g) + I - N_t \times m$$
+
+where $g$ is growth, $I$ is incidence, and $m$ is mortality.
+
+## 2. Define Market Shares
+
+```{r shares}
+shares <- define_market_shares(
+  current = c(
+    drug_A = 0.45,     # current market leader
+    drug_B = 0.35,     # second-line
+    BSC = 0.20          # best supportive care
+  ),
+  new_target = c(
+    drug_A = 0.25,     # displaced by new drug
+    drug_B = 0.25,     # partially displaced
+    BSC = 0.10,         # reduced
+    new_drug = 0.40     # new entrant captures 40%
+  )
+)
+```
+
+## 3. Define Uptake Trajectory
+
+Three shapes are available:
+
+```{r uptake}
+# Linear: constant rate of adoption
+uptake_linear <- define_uptake_curve(shares, years = 5, shape = "linear")
+
+# S-curve: slow start, rapid midpoint, saturation
+uptake_scurve <- define_uptake_curve(shares, years = 5, shape = "s_curve",
+                                     midpoint = 2.5, steepness = 2)
+
+# Immediate: full adoption from year 1
+uptake_immediate <- define_uptake_curve(shares, years = 5, shape = "immediate")
+
+# Compare new_drug share over time
+cat("New drug share by year (linear): ",
+    round(vapply(uptake_linear, function(x) x[["new_drug"]], numeric(1)), 2), "\n")
+cat("New drug share by year (S-curve):",
+    round(vapply(uptake_scurve, function(x) x[["new_drug"]], numeric(1)), 2), "\n")
+```
+
+## 4. Define Cost Components
+
+Breaking costs into components enables detailed budget decomposition:
+
+```{r costs}
+costs <- define_cost_components(
+  drug_A = list(drug = 2500, admin = 300, monitoring = 100, ae = 400),
+  drug_B = list(drug = 1800, admin = 500, monitoring = 100, ae = 600),
+  BSC = list(drug = 200, admin = 100, monitoring = 50, ae = 200),
+  new_drug = list(drug = 5000, admin = 200, monitoring = 333, ae = 150)
+)
+
+print(costs)
+```
+
+## 5. Run the BIA
+
+```{r bia}
+bia <- run_bia_modern(pop, shares, costs, uptake = uptake_scurve)
+```
+
+### Annual Budget Table
+
+```{r table}
+tab <- table_annual_budget(bia)
+tab$Cost_Current <- paste0("$", formatC(round(tab$Cost_Current), big.mark = ","))
+tab$Cost_New <- paste0("$", formatC(round(tab$Cost_New), big.mark = ","))
+tab$Annual_Impact <- paste0("$", formatC(round(tab$Annual_Impact), big.mark = ","))
+tab$Cumulative_Impact <- paste0("$", formatC(round(tab$Cumulative_Impact), big.mark = ","))
+print(tab)
+```
+
+### Total 5-Year Budget Impact
+
+```{r total}
+cat("Total 5-year budget impact: $",
+    formatC(round(bia$total_impact), big.mark = ","), "\n")
+```
+
+## 6. Visualize
+
+### Standard Waterfall
+
+```{r waterfall}
+plot_budget_impact(bia)
+```
+
+### Cost Component Decomposition
+
+```{r components}
+plot_budget_impact(bia, show_components = TRUE)
+```
+
+This shows which cost components drive the budget impact --- drug
+acquisition costs dominate, while AE cost savings partially offset.
+
+## 7. Scenario Analysis
+
+Test how sensitive the budget impact is to key assumptions:
+
+```{r scenarios}
+scenarios <- list(
+  "Base case (S-curve)" = list(
+    population = pop, shares = shares, costs = costs,
+    uptake = uptake_scurve
+  ),
+  "Fast uptake (immediate)" = list(
+    population = pop, shares = shares, costs = costs,
+    uptake = uptake_immediate
+  ),
+  "Slow uptake (linear)" = list(
+    population = pop, shares = shares, costs = costs,
+    uptake = uptake_linear
+  ),
+  "Lower price ($3,500)" = list(
+    population = pop, shares = shares,
+    costs = define_cost_components(
+      drug_A = list(drug = 2500, admin = 300, monitoring = 100, ae = 400),
+      drug_B = list(drug = 1800, admin = 500, monitoring = 100, ae = 600),
+      BSC = list(drug = 200, admin = 100, monitoring = 50, ae = 200),
+      new_drug = list(drug = 3500, admin = 200, monitoring = 333, ae = 150)
+    ),
+    uptake = uptake_scurve
+  ),
+  "Larger eligible population" = list(
+    population = define_population(500000, prevalence = 0.012,
+                                   eligible_fraction = 0.85,
+                                   incident_annual = 200, years = 5),
+    shares = shares, costs = costs, uptake = uptake_scurve
+  )
+)
+
+sc_results <- scenario_bia(scenarios)
+```
+
+### Scenario Comparison
+
+```{r sc-table}
+# Summary: total budget impact per scenario
+summ <- stats::aggregate(Budget_Impact ~ Scenario, data = sc_results, FUN = sum)
+names(summ)[2] <- "Total_5yr_Impact"
+summ$Total_5yr_Impact <- paste0("$", formatC(round(summ$Total_5yr_Impact), big.mark = ","))
+print(summ)
+```
+
+## 8. Using BIA with a CEA Model
+
+Instead of defining cost components manually, you can extract per-patient
+costs directly from a CEA model:
+
+```{r model-bia}
+m <- cea_sick_sicker()
+pop_model <- define_population(100000, prevalence = 0.05, years = 3)
+shares_model <- define_market_shares(
+  current = c(std = 0.7, t1 = 0.3),
+  new_target = c(std = 0.3, t1 = 0.2, t4 = 0.5)
+)
+
+bia_model <- run_bia_modern(
+  pop_model, shares_model,
+  model = m, params_df = m$default_params()
+)
+
+table_annual_budget(bia_model)
+```
+
+## Key Concepts
+
+### Population Dynamics
+
+The eligible patient pool is dynamic:
+
+| Factor | Effect | Example |
+|:-------|:-------|:--------|
+| **Prevalence** | Initial pool size | 0.8% of 500K = 4,000 |
+| **Eligible fraction** | Reduces pool | 75% diagnosed = 3,000 |
+| **Incidence** | Adds patients annually | +150/year |
+| **Mortality** | Removes patients | -5%/year |
+| **Growth** | Scales the base | +2%/year |
+
+### Uptake Shapes
+
+| Shape | Pattern | When to use |
+|:------|:--------|:-----------|
+| **Linear** | Constant adoption rate | Default assumption |
+| **S-curve** | Slow-fast-slow (logistic) | Most realistic for new drugs |
+| **Immediate** | Full adoption year 1 | Worst-case budget scenario |
+
+### Cost Decomposition
+
+Breaking costs into components reveals value drivers:
+
+| Component | What it captures |
+|:----------|:----------------|
+| **Drug** | Acquisition cost (WAC, list price) |
+| **Administration** | IV infusion, injection, oral dispensing |
+| **Monitoring** | Labs, imaging, follow-up visits |
+| **Adverse events** | AE management costs |
+| **Other** | Indirect costs, patient support |
+
+## ISPOR Checklist
+
+Per ISPOR BIA Good Practices (Sullivan et al., 2014):
+
+- [x] **Perspective**: payer (health plan)
+- [x] **Time horizon**: 3-5 years
+- [x] **Target population**: prevalence/incidence-based
+- [x] **Current treatment mix**: market-share-weighted
+- [x] **Uptake trajectory**: time-varying adoption
+- [x] **Cost components**: drug, admin, monitoring, AE
+- [x] **Scenario analysis**: multiple assumptions tested
+- [x] **Undiscounted**: short horizon, no discounting needed
+
+## References
+
+- Mauskopf, J., et al. (2017). Budget-impact analysis of health care
+  interventions: A practical guide. *Expert Review of Pharmacoeconomics
+  & Outcomes Research*, 17(6), 547-558.
+- Sullivan, S. D., et al. (2014). Budget impact analysis --- Principles
+  of good practice: Report of the ISPOR 2012 Budget Impact Analysis
+  Good Practice II Task Force. *Value in Health*, 17(1), 5-14.

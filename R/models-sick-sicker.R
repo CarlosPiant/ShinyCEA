@@ -115,5 +115,27 @@ cea_sick_sicker <- function() {
          trace = trace, survival = survival)
   }
 
-  new_cea_model(info = info, params = params, simulate = simulate)
+  new_cea_model(
+    info = info, params = params, simulate = simulate,
+    composites = list(
+      "Standard alone" = c(std = 1),
+      "Current mix" = c(std = 0.40, t1 = 0.25, t2 = 0.20, t3 = 0.15),
+      "Best treatment" = c(t4 = 1),
+      "New protocol" = c(t4 = 0.60, t2 = 0.40)
+    ),
+    scenarios = list(
+      "Base case" = list(),
+      "No discounting" = list(d_cost = 0, d_qaly = 0),
+      "Short horizon (5yr)" = list(time_horizon = 5),
+      "High progression" = list(p_HS_std = 0.08, p_S1S2_std = 0.10),
+      "Cheap t4" = list(drug_t4 = 350),
+      "Expensive t4" = list(drug_t4 = 1400)
+    ),
+    subgroups = list(
+      "Overall" = list(),
+      "Young (low risk)" = list(p_HS_std = 0.02, p_HD_std = 0.002, u_H = 0.95),
+      "Middle-aged" = list(p_HS_std = 0.05, p_HD_std = 0.005, u_H = 0.85),
+      "Elderly (high risk)" = list(p_HS_std = 0.10, p_HD_std = 0.015, u_H = 0.70)
+    )
+  )
 }

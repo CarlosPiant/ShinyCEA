@@ -100,5 +100,24 @@ cea_partitioned_survival <- function() {
          trace = NULL, survival = survival)
   }
 
-  new_cea_model(info = info, params = params, simulate = simulate)
+  new_cea_model(
+    info = info, params = params, simulate = simulate,
+    composites = list(
+      "Standard" = c(std = 1),
+      "Current mix" = c(std = 0.20, t1 = 0.25, t2 = 0.20, t3 = 0.15, t4 = 0.10, t5 = 0.10),
+      "Best combo" = c(t5 = 0.60, t2 = 0.40)
+    ),
+    scenarios = list(
+      "Base case" = list(),
+      "No discounting" = list(d_cost = 0, d_qaly = 0),
+      "Short horizon (5yr)" = list(time_horizon = 5),
+      "Optimistic PFS" = list(hr_pfs_t5 = 0.50),
+      "Pessimistic OS" = list(hr_os_t5 = 0.95)
+    ),
+    subgroups = list(
+      "Overall" = list(),
+      "Good prognosis" = list(os_scale_std = 4.5, pfs_scale_std = 2.5),
+      "Poor prognosis" = list(os_scale_std = 2.0, pfs_scale_std = 1.0)
+    )
+  )
 }

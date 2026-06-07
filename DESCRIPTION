@@ -27,6 +27,7 @@ Suggests:
     testthat (>= 3.0.0),
     ggrepel,
     rmarkdown,
-    knitr
+    knitr,
+    quarto
 VignetteBuilder: knitr
 Config/testthat/edition: 3

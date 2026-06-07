@@ -9,11 +9,10 @@
 #' @export
 safe_simulate <- function(model, pars, strategy) {
   out <- tryCatch(
-    model$simulate(pars, strategy),
-    error = function(e) NULL,
-    warning = function(w) {
-      invokeRestart("muffleWarning")
-    }
+    suppressMessages(suppressWarnings(
+      model$simulate(pars, strategy)
+    )),
+    error = function(e) NULL
   )
   if (is.null(out)) return(NULL)
 

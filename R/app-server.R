@@ -81,6 +81,16 @@ cea_app_server <- function(models) {
       if (length(s$notes)) {
         shiny::showNotification(paste(s$notes, collapse = " | "), type = "message", duration = 6)
       }
+      # Load predefined composites, scenarios, and subgroups from the model
+      if (!is.null(mod$composites) && is.list(mod$composites)) {
+        wc_store(mod$composites)
+      }
+      if (!is.null(mod$scenarios) && is.list(mod$scenarios)) {
+        sc_store(mod$scenarios)
+      }
+      if (!is.null(mod$subgroups) && is.list(mod$subgroups)) {
+        sg_store(mod$subgroups)
+      }
     })
 
     shiny::observeEvent(input$param_file, {
@@ -183,10 +193,13 @@ cea_app_server <- function(models) {
 
     # --- Deterministic results ---
     det_result <- shiny::eventReactive(input$run_det, {
-      shiny::withProgress(message = "Running deterministic analysis...", value = 0, {
-        ref <- if (identical(input$ref_mode, "pinned")) input$ref_pinned else NULL
-        run_deterministic(current_model(), params_rv(), wtp = input$wtp, ref_strategy = ref)
-      })
+      cat("[ShinyCEA] eventReactive START\n", file = stderr())
+      ref <- if (identical(input$ref_mode, "pinned")) input$ref_pinned else NULL
+      t0 <- proc.time()
+      res <- run_deterministic(current_model(), params_rv(),
+                               wtp = input$wtp, ref_strategy = ref)
+      cat("[ShinyCEA] eventReactive DONE in", (proc.time() - t0)[3], "s\n", file = stderr())
+      res
     })
 
     output$ref_text <- shiny::renderUI({
@@ -281,6 +294,70 @@ cea_app_server <- function(models) {
       }
     )
 
+    # --- Two-Way DSA ---
+    output$twoway_controls <- shiny::renderUI({
+      shiny::req(det_result())
+      df <- params_rv()
+      candidates <- df$name[df$include_tornado & (is.finite(df$lower) | is.finite(df$upper))]
+      shiny::req(length(candidates) >= 2)
+
+      strategies <- det_result()$strategies
+      ref <- det_result()$ref
+      non_ref <- setdiff(strategies, ref)
+
+      shiny::tagList(
+        shiny::fluidRow(
+          shiny::column(3, shiny::selectInput("tw_param1", "Parameter 1",
+                                              choices = candidates, selected = candidates[1])),
+          shiny::column(3, shiny::selectInput("tw_param2", "Parameter 2",
+                                              choices = candidates, selected = candidates[min(2, length(candidates))])),
+          shiny::column(3, shiny::selectInput("tw_target", "Target (vs ref)",
+                                              choices = non_ref, selected = non_ref[1])),
+          shiny::column(3, shiny::radioButtons("tw_metric", "Metric",
+                                               choices = c("INB", "ICER"),
+                                               selected = "INB", inline = TRUE))
+        ),
+        shiny::fluidRow(
+          shiny::column(3, shiny::numericInput("tw_n", "Grid size", value = 20, min = 5, max = 50)),
+          shiny::column(9, shiny::actionButton("tw_run", "Run Two-Way DSA",
+                                               class = "btn-outline-secondary btn-sm"))
+        )
+      )
+    })
+
+    twoway_result <- shiny::eventReactive(input$tw_run, {
+      shiny::req(det_result(), input$tw_param1, input$tw_param2, input$tw_target)
+      shiny::req(input$tw_param1 != input$tw_param2)
+      df <- params_rv()
+
+      r1_row <- df[df$name == input$tw_param1, ]
+      r2_row <- df[df$name == input$tw_param2, ]
+
+      twoway_dsa(
+        current_model(), det_result()$pars,
+        param1 = input$tw_param1, param2 = input$tw_param2,
+        range1 = c(r1_row$lower, r1_row$upper),
+        range2 = c(r2_row$lower, r2_row$upper),
+        n_grid = as.integer(.nc(input$tw_n, 20)),
+        ref = det_result()$ref, target = input$tw_target,
+        wtp = input$wtp, metric = input$tw_metric
+      )
+    })
+
+    output$twoway_plot <- shiny::renderPlot({
+      shiny::req(twoway_result())
+      print(plot_twoway_dsa(twoway_result(), palette = current_palette()))
+    })
+
+    output$download_twoway_png <- shiny::downloadHandler(
+      filename = function() "twoway_dsa.png",
+      content = function(file) {
+        ggplot2::ggsave(file, plot = plot_twoway_dsa(twoway_result(),
+                        palette = current_palette()),
+                        width = 9, height = 7, dpi = 300, units = "in")
+      }
+    )
+
     # --- Frontier plot ---
     ce_frontier_obj <- shiny::reactive({
       shiny::req(det_result())
@@ -371,28 +448,32 @@ cea_app_server <- function(models) {
     psa_state <- shiny::reactiveValues(draws = NULL)
 
     psa_results <- shiny::eventReactive(input$run_psa, {
-      shiny::withProgress(message = "Running PSA...", value = 0, {
-        N <- as.integer(input$psa_n)
-        if (!is.finite(N) || N < 10) N <- 100
-        N <- max(10, min(N, 10000))
-        step <- max(1L, floor(N / 100L))
+      N <- as.integer(input$psa_n)
+      if (!is.finite(N) || N < 10) N <- 100
+      N <- max(10, min(N, 10000))
 
-        res <- run_psa(current_model(), params_rv(), n_sim = N,
-          progress_callback = function(i, n) {
-            if (i %% step == 0) shiny::incProgress(step / n)
-          }
-        )
-
-        if (res$dropped > 0) {
+      res <- tryCatch(
+        run_psa(current_model(), params_rv(), n_sim = N),
+        error = function(e) {
           shiny::showNotification(
-            sprintf("PSA: %d/%d draws dropped.", res$dropped, N),
-            type = if (res$dropped < 0.1 * N) "message" else "warning", duration = 8
+            paste("PSA error:", conditionMessage(e)),
+            type = "error", duration = 15
           )
+          NULL
         }
+      )
 
-        psa_state$draws <- res$draws
-        res$results
-      })
+      if (is.null(res)) return(NULL)
+
+      if (res$dropped > 0) {
+        shiny::showNotification(
+          sprintf("PSA: %d/%d draws dropped.", res$dropped, N),
+          type = if (res$dropped < 0.1 * N) "message" else "warning", duration = 8
+        )
+      }
+
+      psa_state$draws <- res$draws
+      res$results
     })
 
     output$ref_text_psa <- shiny::renderUI({
@@ -924,6 +1005,125 @@ cea_app_server <- function(models) {
       }
     )
 
+    # --- Weighted Comparator ---
+    wc_store <- shiny::reactiveVal(list())       # saved composites
+    wc_building <- shiny::reactiveVal(list())     # current composite being built
+
+    output$wc_strategy_ui <- shiny::renderUI({
+      shiny::req(current_model())
+      shiny::selectInput("wc_strategy", "Strategy",
+                         choices = current_model()$info()$strategies)
+    })
+
+    shiny::observeEvent(input$wc_add_strat, {
+      shiny::req(input$wc_strategy, input$wc_weight)
+      cur <- wc_building()
+      cur[[input$wc_strategy]] <- input$wc_weight
+      wc_building(cur)
+    })
+
+    shiny::observeEvent(input$wc_save, {
+      nm <- trimws(input$wc_name)
+      shiny::req(nzchar(nm))
+      bld <- wc_building()
+      shiny::req(length(bld) > 0)
+      # Normalize weights to sum to 1
+      total <- sum(unlist(bld))
+      if (total > 0) bld <- lapply(bld, function(x) x / total)
+      composites <- wc_store()
+      composites[[nm]] <- unlist(bld)
+      wc_store(composites)
+      wc_building(list())
+    })
+
+    shiny::observeEvent(input$wc_clear, {
+      wc_store(list())
+      wc_building(list())
+    })
+
+    output$wc_list_table <- DT::renderDT({
+      composites <- wc_store()
+      bld <- wc_building()
+      rows <- list()
+      # Show saved composites
+      for (nm in names(composites)) {
+        w <- composites[[nm]]
+        desc <- paste(names(w), "=", round(w, 2), collapse = "; ")
+        rows[[length(rows) + 1L]] <- data.frame(
+          Composite = nm, Strategies = desc, Status = "Saved",
+          stringsAsFactors = FALSE
+        )
+      }
+      # Show current build
+      if (length(bld) > 0) {
+        desc <- paste(names(bld), "=", round(unlist(bld), 2), collapse = "; ")
+        rows[[length(rows) + 1L]] <- data.frame(
+          Composite = paste0("[Building: ", input$wc_name, "]"),
+          Strategies = desc, Status = "Editing",
+          stringsAsFactors = FALSE
+        )
+      }
+      if (length(rows) == 0) {
+        rows[[1]] <- data.frame(
+          Composite = "No composites defined", Strategies = "", Status = "",
+          stringsAsFactors = FALSE
+        )
+      }
+      DT::datatable(do.call(rbind, rows), options = list(dom = "t", pageLength = 20),
+                    rownames = FALSE)
+    })
+
+    wc_result <- shiny::eventReactive(input$wc_run, {
+      composites <- wc_store()
+      shiny::req(length(composites) > 0)
+      run_weighted_analysis(current_model(), params_rv(), composites, wtp = input$wtp)
+    })
+
+    output$wc_results_table <- DT::renderDT({
+      shiny::req(wc_result())
+      df <- wc_result()$composites
+      DT::datatable(df, options = list(dom = "t", pageLength = 20), rownames = FALSE) |>
+        DT::formatCurrency(c("Cost", "NMB"), digits = 0) |>
+        DT::formatRound("QALY", digits = 3)
+    })
+
+    output$wc_pairwise_table <- DT::renderDT({
+      shiny::req(wc_result())
+      df <- wc_result()$pairwise
+      if (nrow(df) == 0) return(NULL)
+      DT::datatable(df, options = list(dom = "t", pageLength = 20), rownames = FALSE) |>
+        DT::formatCurrency(c("IncCost", "INB"), digits = 0) |>
+        DT::formatRound("IncQALY", digits = 4) |>
+        DT::formatRound("ICER", digits = 0)
+    })
+
+    output$download_wc_csv <- shiny::downloadHandler(
+      filename = function() "weighted_analysis.csv",
+      content = function(file) {
+        utils::write.csv(wc_result()$composites, file, row.names = FALSE)
+      }
+    )
+
+    output$wc_cost_plot <- shiny::renderPlot({
+      shiny::req(wc_result())
+      print(plot_weighted_comparison(wc_result()$details, metric = "Cost",
+                                     palette = current_palette()))
+    })
+
+    output$wc_qaly_plot <- shiny::renderPlot({
+      shiny::req(wc_result())
+      print(plot_weighted_comparison(wc_result()$details, metric = "QALY",
+                                     palette = current_palette()))
+    })
+
+    output$wc_forest_plot <- shiny::renderPlot({
+      shiny::req(wc_result())
+      pw <- wc_result()$pairwise
+      if (nrow(pw) == 0) return(NULL)
+      print(plot_weighted_pairwise(pw, metric = input$wc_forest_metric,
+                                   wtp = input$wtp, palette = current_palette()))
+    })
+
     # --- BIA ---
     output$bia_current_mix_ui <- shiny::renderUI({
       shiny::req(current_model())
@@ -1112,6 +1312,135 @@ cea_app_server <- function(models) {
       content = function(file) {
         ggplot2::ggsave(file, plot = sg_forest_obj(),
                         width = 9, height = 6, dpi = 300, units = "in")
+      }
+    )
+
+    # --- Equity / DCEA ---
+    output$equity_ref_ui <- shiny::renderUI({
+      shiny::req(current_model())
+      # Use predefined subgroups if available, or show message
+      mod <- current_model()
+      if (!is.null(mod$subgroups) && length(mod$subgroups) >= 2) {
+        shiny::p(paste0("Using ", length(mod$subgroups),
+                        " predefined subgroups from model definition."),
+                 style = "color: #27AE60; font-size: 0.85rem;")
+      } else {
+        shiny::p("Define subgroups in the model (via new_cea_model(subgroups=...)) for equity analysis.",
+                 style = "color: #E74C3C; font-size: 0.85rem;")
+      }
+    })
+
+    equity_result <- shiny::eventReactive(input$equity_run, {
+      mod <- current_model()
+      shiny::req(!is.null(mod$subgroups), length(mod$subgroups) >= 2)
+
+      # Convert model subgroups to DCEA format (add share and baseline_qaly)
+      sg_names <- names(mod$subgroups)
+      n_sg <- length(sg_names)
+      equal_share <- 1 / n_sg
+
+      dcea_subgroups <- lapply(sg_names, function(nm) {
+        sg <- mod$subgroups[[nm]]
+        overrides <- if (is.list(sg)) sg else list()
+        list(
+          overrides = overrides,
+          share = equal_share,
+          baseline_qaly = 0.80 - (match(nm, sg_names) - 1) * 0.10
+        )
+      })
+      names(dcea_subgroups) <- sg_names
+
+      run_distributional_cea(mod, params_rv(), dcea_subgroups, wtp = input$wtp)
+    })
+
+    output$equity_nmb_plot <- shiny::renderPlot({
+      shiny::req(equity_result())
+      print(plot_nmb_by_subgroup(equity_result(), "NMB",
+                                  palette = current_palette()))
+    })
+
+    output$equity_lorenz_strategy_ui <- shiny::renderUI({
+      shiny::req(equity_result())
+      shiny::selectInput("equity_lorenz_strat", "Strategy for Lorenz curve",
+                         choices = equity_result()$strategies)
+    })
+
+    output$equity_lorenz_plot <- shiny::renderPlot({
+      shiny::req(equity_result(), input$equity_lorenz_strat)
+      print(plot_health_distribution(equity_result(),
+                                      strategy = input$equity_lorenz_strat,
+                                      palette = current_palette()))
+    })
+
+    output$equity_ci_table <- DT::renderDT({
+      shiny::req(equity_result())
+      rows <- lapply(equity_result()$strategies, function(s) {
+        ci <- calculate_concentration_index(equity_result(), strategy = s)
+        data.frame(Strategy = s, C_Index = round(ci$index, 4),
+                   Interpretation = ci$interpretation, stringsAsFactors = FALSE)
+      })
+      DT::datatable(do.call(rbind, rows), options = list(dom = "t"),
+                    rownames = FALSE)
+    })
+
+    output$equity_weighted_table <- DT::renderDT({
+      shiny::req(equity_result())
+      ew <- calculate_equity_weighted_nmb(equity_result(), method = "atkinson",
+                                           epsilon = .nc(input$equity_epsilon, 1))
+      ew$NMB <- round(ew$NMB)
+      ew$Equity_Weighted_NMB <- round(ew$Equity_Weighted_NMB)
+      ew$QALY <- round(ew$QALY, 3)
+      ew$Equity_Weighted_QALY <- round(ew$Equity_Weighted_QALY, 3)
+      DT::datatable(ew, options = list(dom = "t"), rownames = FALSE)
+    })
+
+    output$equity_frontier_plot <- shiny::renderPlot({
+      shiny::req(equity_result())
+      print(equity_frontier(equity_result(), palette = current_palette()))
+    })
+
+    # --- Validation ---
+    val_result <- shiny::eventReactive(input$val_run, {
+      generate_validation_report(current_model(), params_rv(), wtp = input$wtp)
+    })
+
+    output$val_score_ui <- shiny::renderUI({
+      shiny::req(val_result())
+      score <- val_result()$score
+      color <- if (score >= 90) "#27AE60" else if (score >= 80) "#F39C12" else "#E74C3C"
+      summ <- val_result()$summary
+      shiny::tagList(
+        shiny::h3(paste0("Score: ", score, "/100"),
+                  style = paste0("color:", color, ";")),
+        shiny::div(style = "display:flex; gap:10px;",
+          shiny::span(class = "badge bg-success",
+                      paste0("PASS: ", summ$Count[summ$Status == "PASS"])),
+          shiny::span(class = "badge bg-warning",
+                      paste0("WARN: ", summ$Count[summ$Status == "WARN"])),
+          shiny::span(class = "badge bg-danger",
+                      paste0("FAIL: ", summ$Count[summ$Status == "FAIL"]))
+        )
+      )
+    })
+
+    output$val_table <- DT::renderDT({
+      shiny::req(val_result())
+      df <- val_result()$details
+      status_colors <- c(PASS = "#1b9e77", WARN = "#d95f02", FAIL = "#d73027")
+      DT::datatable(df, options = list(pageLength = 20, scrollX = TRUE),
+                    rownames = FALSE) |>
+        DT::formatStyle("status",
+          color = DT::styleEqual(names(status_colors), rep("white", 3)),
+          backgroundColor = DT::styleEqual(names(status_colors), unname(status_colors)),
+          fontWeight = "bold"
+        )
+    })
+
+    output$download_val_md <- shiny::downloadHandler(
+      filename = function() "validation_report.md",
+      content = function(file) {
+        generate_validation_report(current_model(), params_rv(),
+                                   wtp = input$wtp, output_file = file)
       }
     )
 

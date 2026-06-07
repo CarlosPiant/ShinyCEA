@@ -215,11 +215,16 @@ build_tornado_data <- function(params_df, base_pars, model, ref, target,
   }
 
   safe_metric <- function(pars) {
-    tryCatch({
-      ref_res <- model$simulate(pars, ref)
-      tgt_res <- model$simulate(pars, target)
-      suppressWarnings(as.numeric(metric_fun(ref_res, tgt_res)))
-    }, error = function(e) NA_real_)
+    tryCatch(
+      withCallingHandlers({
+        ref_res <- model$simulate(pars, ref)
+        tgt_res <- model$simulate(pars, target)
+        suppressWarnings(as.numeric(metric_fun(ref_res, tgt_res)))
+      },
+      warning = function(w) invokeRestart("muffleWarning"),
+      message = function(m) invokeRestart("muffleMessage")),
+      error = function(e) NA_real_
+    )
   }
 
   base_val <- safe_metric(base_pars)

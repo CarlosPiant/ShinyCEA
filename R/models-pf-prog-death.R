@@ -114,5 +114,22 @@ cea_pf_prog_death <- function() {
          trace = trace, survival = survival)
   }
 
-  new_cea_model(info = info, params = params, simulate = simulate)
+  new_cea_model(
+    info = info, params = params, simulate = simulate,
+    composites = list(
+      "Standard" = c(std = 1),
+      "Current mix" = c(std = 0.30, t1 = 0.25, t2 = 0.20, t3 = 0.10, t4 = 0.10, t5 = 0.05),
+      "Best efficacy" = c(t5 = 1)
+    ),
+    scenarios = list(
+      "Base case" = list(),
+      "No discounting" = list(d_cost = 0, d_qaly = 0),
+      "Aggressive disease" = list(p_PF_prog_std = 0.12, p_Prog_death_std = 0.10)
+    ),
+    subgroups = list(
+      "Overall" = list(),
+      "Low risk" = list(p_PF_prog_std = 0.04, p_PF_death_std = 0.001),
+      "High risk" = list(p_PF_prog_std = 0.12, p_PF_death_std = 0.008)
+    )
+  )
 }

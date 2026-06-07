@@ -1,0 +1,383 @@
+---
+title: "Microsimulation Models in ShinyCEA"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Microsimulation Models in ShinyCEA}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+set.seed(20250606)
+```
+
+Microsimulation (individual-level simulation) models track each patient
+individually through health states, rather than tracking cohort proportions.
+This enables patient-level heterogeneity, history-dependent transitions, and
+individual event tracking --- features that cohort Markov models cannot
+represent. This vignette explains microsimulation concepts, demonstrates how
+to build a microsimulation model for ShinyCEA, and discusses practical
+considerations for performance and reproducibility.
+
+## Cohort vs. Microsimulation
+
+| Feature | Cohort Markov | Microsimulation |
+|:--------|:-------------|:----------------|
+| Unit of analysis | Cohort proportions | Individual patients |
+| Heterogeneity | Homogeneous cohort | Patient-level attributes (age, sex, risk) |
+| Memory | Memoryless (Markov property) | Can depend on history (time in state, events) |
+| Event tracking | Counts proportions | Counts per-patient events |
+| Speed | Fast (matrix multiplication) | Slower (patient-level loops) |
+| Variance | Deterministic | Stochastic (Monte Carlo noise) |
+| When to use | Few states, homogeneous | Complex pathways, heterogeneity matters |
+
+Microsimulation is recommended when the Markov assumption (memoryless
+transitions) is violated --- for example, when the probability of death
+increases with time spent in a disease state, or when treatment response
+depends on individual patient characteristics (Krijkamp et al., 2018;
+Brennan et al., 2006).
+
+## The ShinyCEA Model Contract
+
+ShinyCEA's model interface is agnostic to the simulation method. The
+`simulate(pars, strategy)` function must return `list(cost, qaly)` ---
+how you compute those values internally is entirely up to you. For
+microsimulation, the function simulates N individual patients and returns
+the **mean** cost and QALY across the cohort.
+
+Optionally returning `trace` (a matrix of state proportions over time) and
+`survival` (a data.frame with OS) enables the Survival and Traces tabs.
+
+## Bundled Example: Chronic Disease Microsimulation
+
+ShinyCEA includes a bundled microsimulation model with 4 states, heterogeneous
+patient ages, age-dependent mortality, treatment-induced recovery, and
+individual hospitalization events.
+
+```{r load}
+library(ShinyCEA)
+model <- cea_microsim()
+print(model)
+```
+
+### Model Structure
+
+**States:**
+
+1. **Stable** --- disease controlled, low cost, high utility
+2. **Progressed** --- disease advancing, moderate cost
+3. **Severe** --- high-cost state with hospitalization risk
+4. **Dead** --- absorbing
+
+**Strategies:**
+
+- **Standard** --- baseline treatment (low drug cost, no recovery from progression)
+- **New treatment** --- reduces progression risk (RR 0.60), reduces mortality
+  (RR 0.75), enables recovery from Progressed back to Stable (3%/month),
+  but costs more ($1,500 vs $200/month)
+
+**Patient heterogeneity:**
+
+Each patient gets an individual baseline age drawn from
+$\text{Normal}(\mu = 45, \sigma = 10)$, which modifies mortality via an
+age-dependent hazard ratio: $\text{HR}_{\text{age}} = 1.03^{\max(0, \text{age} - 45)}$.
+This means older patients face progressively higher death rates.
+
+**History-dependent features:**
+
+- Hospitalization events are tracked per-patient per-cycle in the Severe
+  state (Bernoulli draw with p = 0.15)
+- Recovery from Progressed to Stable is only available under new treatment
+  --- this is a treatment-specific transition that cohort models can
+  represent but microsimulation tracks at the individual level
+
+## Running the Model
+
+### Deterministic Analysis
+
+```{r deterministic}
+# Use a smaller N for the vignette (faster)
+params <- model$default_params()
+params$base[params$name == "n_patients"] <- 500
+
+det <- run_deterministic(model, params, wtp = 50000)
+det$table[, c("Strategy", "Cost", "QALY", "NMB", "ICER_vsRef")]
+```
+
+Note: because microsimulation is stochastic, results will vary slightly
+between runs. With N = 500, the Monte Carlo standard error is approximately
+$\text{SE} \approx \text{SD}/\sqrt{500}$. Increase `n_patients` for more
+precise estimates.
+
+### Frontier Analysis
+
+```{r frontier}
+plot_frontier(det$frontier_status)
+```
+
+### Survival Curves
+
+The `simulate()` function aggregates individual death times into a cohort
+survival curve, enabling the Survival tab:
+
+```{r survival}
+surv_data <- do.call(rbind, lapply(c("standard", "new_treatment"), function(s) {
+  res <- model$simulate(stats::setNames(as.list(params$base), params$name), s)
+  df <- res$survival
+  df$strategy <- s
+  df
+}))
+plot_survival(surv_data, curve_name = "OS")
+```
+
+### State Traces
+
+Individual state histories are aggregated into cohort-level proportions
+per cycle:
+
+```{r traces}
+pars <- stats::setNames(as.list(params$base), params$name)
+res <- model$simulate(pars, "new_treatment")
+
+trace_long <- do.call(rbind, lapply(colnames(res$trace), function(state) {
+  data.frame(
+    strategy = "new_treatment",
+    time = seq(0, nrow(res$trace) - 1) / 12,
+    state = state,
+    prob = res$trace[, state]
+  )
+}))
+plot_trace(trace_long, facet = FALSE)
+```
+
+### Tornado Diagram
+
+One-way sensitivity analysis works the same as with cohort models --- each
+parameter is varied while the microsimulation re-runs at each bound:
+
+```{r tornado}
+df_tor <- params[params$include_tornado &
+                   (is.finite(params$lower) | is.finite(params$upper)), ]
+tor <- build_tornado_data(df_tor, det$pars, model,
+                          ref = "standard", target = "new_treatment",
+                          metric = "INB", wtp = 50000)
+if (nrow(tor) > 0) {
+  plot_tornado(tor, base_val = unique(tor$base)[1],
+               metric_label = "INB (new_treatment vs standard)")
+}
+```
+
+## Building Your Own Microsimulation
+
+### Step 1: Define the Simulation Loop
+
+The core of a microsimulation is a per-patient, per-cycle loop. Here is
+a minimal template:
+
+```{r template, eval = FALSE}
+simulate = function(pars, strategy) {
+  N <- as.integer(pars[["n_patients"]])
+  n_cycles <- as.integer(pars[["n_cycles"]])
+  cl <- pars[["cycle_length"]]  # e.g., 1/12 for monthly
+
+  # Patient attributes (heterogeneity)
+  ages <- rnorm(N, mean = pars[["mean_age"]], sd = pars[["age_sd"]])
+
+  # State vector: each patient starts in state 1
+
+  state <- rep(1L, N)
+  patient_cost <- numeric(N)
+  patient_qaly <- numeric(N)
+
+  for (t in seq_len(n_cycles)) {
+    alive <- state < 4L  # state 4 = dead
+
+    # Transition logic (vectorized across patients)
+    u <- runif(N)
+    # ... compute transition probabilities per patient ...
+    # ... update state based on u < cumulative probabilities ...
+
+    # Accumulate costs and QALYs for alive patients
+    # ... based on current state ...
+  }
+
+  list(cost = mean(patient_cost), qaly = mean(patient_qaly))
+}
+```
+
+### Step 2: Vectorize for Performance
+
+The most common performance mistake is looping over patients in R:
+
+```{r bad-loop, eval = FALSE}
+# SLOW: nested loop over patients and cycles
+for (i in 1:N) {
+  for (t in 1:n_cycles) {
+    # ... process patient i at cycle t ...
+  }
+}
+```
+
+Instead, vectorize across patients within each cycle:
+
+```{r good-vectorized, eval = FALSE}
+# FAST: vectorized across all patients per cycle
+for (t in 1:n_cycles) {
+  u <- runif(N)  # one draw per patient
+
+  # Stable patients
+  idx <- which(state == 1L)
+  state[idx] <- ifelse(u[idx] < p_prog, 2L,
+                 ifelse(u[idx] < p_prog + p_dead, 4L, 1L))
+
+  # ... similarly for other states ...
+}
+```
+
+This reduces a 1000-patient, 120-cycle simulation from minutes to
+milliseconds.
+
+### Step 3: Return Trace and Survival (Optional)
+
+To enable the Survival and Traces tabs, aggregate individual trajectories:
+
+```{r aggregate, eval = FALSE}
+# Inside the cycle loop, after updating states:
+trace[t + 1, ] <- c(
+  mean(state == 1L),  # proportion in Stable
+  mean(state == 2L),  # proportion in Progressed
+  mean(state == 3L),  # proportion in Severe
+  mean(state == 4L)   # proportion Dead
+)
+
+# After the loop:
+os <- 1 - trace[, "Dead"]
+survival <- data.frame(time = seq(0, n_cycles) * cl, surv = os, curve = "OS")
+
+list(cost = mean(patient_cost), qaly = mean(patient_qaly),
+     trace = trace, survival = survival)
+```
+
+### Step 4: Handle Reproducibility
+
+Microsimulations are stochastic. For deterministic analysis (tornado,
+threshold), you want reproducible results. Two approaches:
+
+**Approach A: Fixed seed inside simulate() (simple but limits PSA)**
+
+```{r seed-fixed, eval = FALSE}
+simulate = function(pars, strategy) {
+  set.seed(42)  # same results every call
+  # ... microsim ...
+}
+```
+
+**Approach B: Quasi-random patient attributes (recommended)**
+
+Use quantile-based draws for patient heterogeneity, and `runif()` only
+for transition events. The bundled example uses this approach for ages:
+
+```{r quasi, eval = FALSE}
+# Deterministic patient ages (no randomness)
+ages <- mean_age + age_sd * qnorm((seq_len(N) - 0.5) / N)
+```
+
+This gives the same age distribution every time while allowing transition
+randomness to vary across PSA iterations.
+
+## PSA with Microsimulation
+
+PSA adds an outer loop of parameter uncertainty on top of the inner
+microsimulation. Each PSA iteration:
+
+1. Draws parameter values from their distributions
+2. Runs the microsimulation with those parameters
+3. Records the mean cost and QALY
+
+This is computationally expensive: 1,000 PSA iterations x 1,000 patients
+= 1,000,000 individual simulations. Practical recommendations:
+
+- **Reduce N for PSA**: Use N = 200--500 for PSA (the parameter uncertainty
+  typically dominates the Monte Carlo noise)
+- **Keep N large for deterministic**: Use N = 2,000--10,000 for the base case
+
+```{r psa}
+# Small N for PSA speed
+psa_params <- model$default_params()
+psa_params$base[psa_params$name == "n_patients"] <- 200
+
+set.seed(20250606)
+psa <- run_psa(model, psa_params, n_sim = 100)
+cat("PSA: used =", psa$used, ", dropped =", psa$dropped, "\n")
+```
+
+```{r ceac}
+ceac <- compute_ceac(psa$results, model$info()$strategies,
+                     wtp_max = 100000, wtp_step = 5000)
+plot_ceac(ceac)
+```
+
+## Performance Benchmarks
+
+```{r benchmark}
+params_bench <- model$default_params()
+pars_bench <- stats::setNames(as.list(params_bench$base), params_bench$name)
+
+for (n in c(200, 500, 1000, 2000)) {
+  pars_bench[["n_patients"]] <- n
+  t0 <- proc.time()
+  model$simulate(pars_bench, "standard")
+  elapsed <- (proc.time() - t0)[3]
+  cat(sprintf("N = %5d: %.3f seconds\n", n, elapsed))
+}
+```
+
+The vectorized implementation scales linearly with N. For interactive use
+in ShinyCEA, N = 1,000 (the default) provides a good balance of precision
+and responsiveness.
+
+## Launching the App
+
+```{r app, eval = FALSE}
+# Launch with the microsimulation model
+run_cea_app(cea_microsim())
+
+# Or combine with cohort models for comparison
+run_cea_app(cea_microsim(), cea_sick_sicker())
+```
+
+All ShinyCEA features work with microsimulation models:
+deterministic analysis, tornado, two-way DSA, threshold analysis, PSA,
+CEAC, expected loss, EVPI/EVPPI, scenarios, subgroups, BIA, weighted
+comparators, and report generation.
+
+## When to Use Microsimulation vs. Cohort Models
+
+| Use cohort (Markov) when... | Use microsimulation when... |
+|:---------------------------|:---------------------------|
+| States are few (<10) | Many states or complex pathways |
+| Transitions are memoryless | Transitions depend on history |
+| Population is homogeneous | Patient heterogeneity matters |
+| Speed is critical (PSA with many iterations) | Individual event tracking needed |
+| Analytical tractability preferred | Competing risks with interactions |
+
+Many decisions start with a cohort model for rapid iteration, then move
+to microsimulation when heterogeneity or history-dependence is important
+for the decision. ShinyCEA's model interface supports both without
+changing any analysis code.
+
+## References
+
+- Brennan, A., Chick, S. E., & Davies, R. (2006). A taxonomy of model
+  structures for economic evaluation of health technologies. *Health
+  Economics*, 15(12), 1295-1310.
+- Krijkamp, E. M., et al. (2018). Microsimulation modeling for health
+  decision sciences using R: A tutorial. *Medical Decision Making*,
+  38(3), 400-422.
+- Caro, J. J., et al. (2012). Modeling good research practices ---
+  overview: a report of the ISPOR-SMDM Modeling Good Research Practices
+  Task Force. *Medical Decision Making*, 32(5), 667-677.
+- Siebert, U., et al. (2012). State-transition modeling: a report of the
+  ISPOR-SMDM Modeling Good Research Practices Task Force. *Medical
+  Decision Making*, 32(5), 690-700.

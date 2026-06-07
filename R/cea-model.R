@@ -5,9 +5,21 @@
 #' @param simulate A function(pars, strategy) returning list(cost, qaly, trace?, survival?).
 #' @param diagram Optional path to a diagram image file (PNG/SVG).
 #' @param description Optional character string or path to a markdown file describing the model.
+#' @param composites Optional named list of predefined weighted composites for
+#'   the Weighted Comparator tab. Each element is a named numeric vector of
+#'   strategy weights that sum to 1. Example:
+#'   \code{list("Current SoC" = c(std = 0.6, t1 = 0.4), "New drug" = c(t2 = 1))}.
+#' @param subgroups Optional named list of predefined subgroups for the
+#'   Subgroups tab. Each element is a named list of parameter overrides.
+#'   Example: \code{list("High risk" = list(p_prog = 0.1), "Low risk" = list(p_prog = 0.02))}.
+#' @param scenarios Optional named list of predefined scenarios for the
+#'   Scenarios tab. Each element is a named list of parameter overrides.
+#'   Example: \code{list("No discount" = list(d_cost = 0, d_qaly = 0))}.
 #' @return A validated `cea_model` object.
 #' @export
-new_cea_model <- function(info, params, simulate, diagram = NULL, description = NULL) {
+new_cea_model <- function(info, params, simulate, diagram = NULL,
+                          description = NULL, composites = NULL,
+                          subgroups = NULL, scenarios = NULL) {
   stopifnot(is.function(info), is.function(params), is.function(simulate))
 
   model <- structure(
@@ -16,7 +28,10 @@ new_cea_model <- function(info, params, simulate, diagram = NULL, description = 
       default_params = params,
       simulate = simulate,
       diagram = diagram,
-      description = description
+      description = description,
+      composites = composites,
+      subgroups = subgroups,
+      scenarios = scenarios
     ),
     class = "cea_model"
   )
@@ -63,7 +78,13 @@ validate_cea_model <- function(model) {
 
   pars <- stats::setNames(as.list(df$base), df$name)
   strat1 <- info$strategies[1]
-  res <- tryCatch(model$simulate(pars, strat1), error = function(e) {
+  res <- tryCatch(
+    withCallingHandlers(
+      model$simulate(pars, strat1),
+      warning = function(w) invokeRestart("muffleWarning"),
+      message = function(m) invokeRestart("muffleMessage")
+    ),
+    error = function(e) {
     stop("model$simulate() failed for strategy '", strat1, "': ",
          conditionMessage(e), call. = FALSE)
   })
@@ -87,6 +108,9 @@ print.cea_model <- function(x, ...) {
   df <- x$default_params()
   cat("  Parameters:", nrow(df), "\n")
   if (!is.null(x$diagram)) cat("  Diagram:", x$diagram, "\n")
+  if (!is.null(x$composites)) cat("  Composites:", length(x$composites), "predefined\n")
+  if (!is.null(x$scenarios)) cat("  Scenarios:", length(x$scenarios), "predefined\n")
+  if (!is.null(x$subgroups)) cat("  Subgroups:", length(x$subgroups), "predefined\n")
   invisible(x)
 }
 

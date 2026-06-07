@@ -1,0 +1,291 @@
+---
+title: "Parameter Management and PSA Distributions"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Parameter Management and PSA Distributions}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+Managing parameters in a cost-effectiveness model involves specifying point
+estimates, uncertainty ranges, probability distributions for PSA, and
+metadata for traceability. ShinyCEA provides a suite of functions that
+standardize this process, automatically derive distribution shape parameters
+from the evidence you have, and support correlated PSA draws. This vignette
+covers the full parameter lifecycle: definition, validation, distribution
+derivation, PSA sampling, and correlation.
+
+## The Parameter Lifecycle
+
+```
+define_param() / read_param_csv()    # 1. Define
+       ↓
+validate_param_table()               # 2. Validate
+       ↓
+derive_beta/gamma/lognormal()        # 3. Derive shapes (automatic)
+       ↓
+sample_psa() + add_correlation()     # 4. Draw PSA samples
+       ↓
+run_psa() / run_deterministic()      # 5. Analyze
+```
+
+## 1. Defining Parameters
+
+### Single parameters: `define_param()`
+
+`define_param()` is the rich version of `cea_param()`. It accepts standard
+errors, confidence intervals, source citations, and parameter groups, and
+automatically computes distribution shape parameters.
+
+```{r define}
+library(ShinyCEA)
+
+# From a 95% CI
+p_death <- define_param(
+  "p_death", mean = 0.05, lower = 0.03, upper = 0.08,
+  distribution = "beta",
+  group = "Probabilities",
+  source = "Smith et al. 2023, Table 2"
+)
+
+# From a standard error
+c_drug <- define_param(
+  "c_drug", mean = 5000, se = 1000,
+  distribution = "gamma",
+  group = "Costs",
+  source = "CMS fee schedule 2026"
+)
+
+# Hazard ratio from a clinical trial
+hr_os <- define_param(
+  "hr_os", mean = 0.72, lower = 0.58, upper = 0.88,
+  distribution = "lognormal",
+  group = "Treatment effects",
+  source = "VISION trial, Sartor 2021"
+)
+
+# Combine into a parameter table
+params <- rbind(p_death, c_drug, hr_os)
+params[, c("name", "mean", "lower", "upper", "se", "distribution", "shape1", "shape2")]
+```
+
+Notice that `shape1` and `shape2` are automatically derived:
+
+- **Beta**: shape1 = alpha, shape2 = beta (method of moments from mean + CI)
+- **Gamma**: shape1 = shape, shape2 = rate (from mean + SE)
+- **Log-normal**: shape1 = meanlog, shape2 = sdlog (from log(HR) + CI width)
+
+### Bulk parameters from CSV: `read_param_csv()`
+
+For models with many parameters, define them in a spreadsheet and load:
+
+```{r csv, eval = FALSE}
+params <- read_param_csv("my_parameters.csv")
+```
+
+The CSV needs at minimum a `name` column. Other columns (`mean`, `lower`,
+`upper`, `se`, `distribution`, `include_psa`, `include_tornado`, `group`,
+`source`) are auto-filled with defaults if missing. Bounds are derived from
+SE (and vice versa) automatically.
+
+## 2. Deriving Distribution Parameters
+
+### The problem
+
+Clinical evidence typically reports a point estimate and a confidence
+interval (or standard error). But PSA requires distribution *shape*
+parameters --- alpha/beta for Beta, shape/rate for Gamma, meanlog/sdlog
+for Log-normal. ShinyCEA bridges this gap automatically.
+
+### `derive_beta()`: Probabilities and Utilities
+
+For a probability $p$ with 95% CI $(l, u)$, the variance is estimated as
+$s^2 = \left(\frac{u - l}{2 \times 1.96}\right)^2$ and the Beta parameters
+are derived via method of moments:
+
+$$\alpha = \mu \left(\frac{\mu(1-\mu)}{s^2} - 1\right), \quad
+\beta = (1-\mu) \left(\frac{\mu(1-\mu)}{s^2} - 1\right)$$
+
+```{r beta}
+derive_beta(mean = 0.30, lower = 0.20, upper = 0.40)
+derive_beta(mean = 0.05, se = 0.01)
+```
+
+### `derive_gamma()`: Costs
+
+For a cost $c > 0$ with SE $s$, the Gamma parameters are:
+
+$$\text{shape} = \frac{\mu^2}{s^2}, \quad
+\text{rate} = \frac{\mu}{s^2}$$
+
+```{r gamma}
+derive_gamma(mean = 5000, se = 1000)
+derive_gamma(mean = 1200, lower = 800, upper = 1600)
+```
+
+### `derive_lognormal()`: Hazard Ratios
+
+For an HR with 95% CI $(l, u)$, the log-normal parameters are:
+
+$$\mu_{\log} = \log(\text{HR}), \quad
+\sigma_{\log} = \frac{\log(u) - \log(l)}{2 \times 1.96}$$
+
+This is the standard approach recommended by Briggs et al. (2006, Ch. 4)
+for sampling treatment effects in PSA.
+
+```{r lognormal}
+derive_lognormal(hr = 0.72, lower = 0.58, upper = 0.88)
+derive_lognormal(hr = 0.62, lower = 0.50, upper = 0.75)
+```
+
+## 3. Validating Parameters
+
+`validate_param_table()` performs comprehensive checks beyond the basic
+`sanitize_params()`:
+
+```{r validate}
+# A table with intentional problems
+bad_params <- rbind(
+  define_param("p_impossible", 1.5, se = 0.1, distribution = "beta"),
+  define_param("c_negative", -500, se = 100, distribution = "gamma"),
+  define_param("hr_good", 0.72, lower = 0.58, upper = 0.88,
+               distribution = "lognormal"),
+  define_param("p_ok", 0.3, se = 0.05, distribution = "beta")
+)
+
+diag <- validate_param_table(bad_params)
+diag[diag$status != "PASS", c("parameter", "check", "status", "message")]
+```
+
+The validator checks:
+
+| Check | What it catches |
+|:------|:---------------|
+| **Beta domain** | Mean outside [0,1] for beta distribution |
+| **Gamma domain** | Negative mean for gamma distribution |
+| **Log-normal domain** | Non-positive mean for log-normal |
+| **Bounds order** | Lower > upper |
+| **Base in bounds** | Base case outside [lower, upper] |
+| **PSA readiness** | PSA-eligible parameter with no bounds or SE |
+| **Unique names** | Duplicate parameter names |
+| **Distribution supported** | Unknown distribution type |
+
+## 4. PSA Sampling
+
+### Independent draws: `sample_psa()`
+
+`sample_psa()` generates an N x P matrix of parameter draws using the
+inverse-CDF (quantile) method. This is more stable than the rejection
+approach and enables correlated draws via a Gaussian copula.
+
+```{r psa-draws}
+params <- rbind(
+  define_param("p_death", 0.05, se = 0.01, distribution = "beta"),
+  define_param("c_drug", 5000, se = 1000, distribution = "gamma"),
+  define_param("hr_os", 0.72, lower = 0.58, upper = 0.88,
+               distribution = "lognormal"),
+  define_param("u_pfs", 0.68, se = 0.05, distribution = "beta"),
+  define_param("structural", 10, distribution = "fixed", include_psa = FALSE)
+)
+
+set.seed(42)
+draws <- sample_psa(params, n = 2000)
+cat("Dimensions:", nrow(draws), "x", ncol(draws), "\n")
+cat("Columns:", paste(names(draws), collapse = ", "), "\n")
+```
+
+Note that `structural` (fixed, include_psa = FALSE) is excluded from the
+draws.
+
+```{r psa-summary}
+summary(draws)
+```
+
+### Correlated draws: `add_correlation()`
+
+In practice, some parameters are correlated --- for example, treatment
+costs and administration costs, or PFS and OS hazard ratios for the same
+drug. Ignoring correlation can underestimate decision uncertainty
+(Briggs et al., 2006).
+
+`add_correlation()` defines a correlation structure that `sample_psa()`
+uses via a Gaussian copula (Cholesky decomposition):
+
+```{r correlation}
+corr <- add_correlation(pairs = list(
+  list(params = c("p_death", "hr_os"), rho = 0.4),
+  list(params = c("c_drug", "u_pfs"), rho = -0.3)
+))
+
+print(corr$matrix)
+```
+
+```{r correlated-draws}
+set.seed(42)
+draws_corr <- sample_psa(params, n = 2000, correlation = corr)
+
+# Verify correlation is induced
+cat("Correlation(p_death, hr_os):",
+    round(cor(draws_corr$p_death, draws_corr$hr_os), 3), "\n")
+cat("Correlation(c_drug, u_pfs):",
+    round(cor(draws_corr$c_drug, draws_corr$u_pfs), 3), "\n")
+```
+
+## 5. Distribution Choice Guide
+
+| Parameter type | Distribution | Why | Derive with |
+|:--------------|:-------------|:----|:-----------|
+| Probabilities (0-1) | Beta | Bounded [0,1], flexible shape | `derive_beta()` |
+| Utilities (0-1) | Beta | Same as probabilities | `derive_beta()` |
+| Costs (> 0) | Gamma | Positive, right-skewed | `derive_gamma()` |
+| Hazard ratios | Log-normal | Positive, multiplicative | `derive_lognormal()` |
+| Relative risks | Log-normal | Same as HRs | `derive_lognormal()` |
+| Odds ratios | Log-normal | Same as HRs | `derive_lognormal()` |
+| Unbounded effects | Normal | Symmetric, any range | SE directly |
+| Hard-bounded ranges | Uniform | No central tendency | Lower/upper |
+| Expert-elicited | Triangular/PERT | Mode + bounds | Lower/mode/upper |
+| Structural | Fixed | Not uncertain | --- |
+
+## 6. Integration with Models
+
+The parameter table from `define_param()` is compatible with
+`new_cea_model()`. Strip the extra columns if your model's `params()`
+function returns the standard format:
+
+```{r model-integration, eval = FALSE}
+my_model <- new_cea_model(
+  info = function() list(key = "demo", name = "Demo",
+                         strategies = c("A", "B")),
+  params = function() {
+    # define_param returns extra columns; the model uses standard ones
+    rbind(
+      define_param("p", 0.1, se = 0.02, distribution = "beta",
+                   group = "Probabilities"),
+      define_param("c", 1000, se = 200, distribution = "gamma",
+                   group = "Costs")
+    )
+  },
+  simulate = function(pars, strategy) {
+    list(cost = pars[["c"]], qaly = 1 - pars[["p"]])
+  }
+)
+```
+
+The extra columns (`se`, `shape1`, `shape2`, `group`, `source`,
+`description`) are ignored by `sanitize_params()` and the Shiny app ---
+they're for documentation and for `validate_param_table()` and
+`sample_psa()`.
+
+## References
+
+- Briggs, A. H., Claxton, K., & Sculpher, M. J. (2006). *Decision
+  Modelling for Health Economic Evaluation*. Oxford University Press.
+  Chapter 4: Handling Uncertainty.
+- Claxton, K., et al. (2005). Probabilistic sensitivity analysis for
+  NICE technology assessment. *Health Economics*, 14(4), 339-347.
+- Drummond, M. F., et al. (2015). *Methods for the Economic Evaluation
+  of Health Care Programmes* (4th ed.). Oxford University Press.

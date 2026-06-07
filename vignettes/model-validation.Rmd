@@ -1,0 +1,275 @@
+---
+title: "Model Validation, QA and Auditing"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Model Validation, QA and Auditing}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+Decision-analytic models in CEA must be verified and validated before their
+results inform policy. Errors in transition probabilities, discounting,
+dominance classification, or PSA distributions can silently produce wrong
+conclusions. ShinyCEA provides a suite of automated checks that cover the
+full model lifecycle, following the AdViSHE framework (Vemer et al., 2016)
+and ISPOR-SMDM good modeling practices (Eddy et al., 2012).
+
+This vignette demonstrates every validation function and how to generate
+a comprehensive quality report.
+
+## Validation Suite Overview
+
+| Function | What it checks | When to run |
+|:---------|:--------------|:-----------|
+| `check_transition_matrix()` | Trace: rows sum to 1, non-negative, death monotone | After first simulate() |
+| `check_probabilities_sum()` | Prob params in [0,1], groups sum to <=1 | After defining parameters |
+| `check_discounting()` | Undiscounted >= discounted, rate in range | After model construction |
+| `check_psa_inputs()` | Distribution-domain consistency, bounds present | Before running PSA |
+| `check_dominance_logic()` | Dominated correctly identified, ICERs monotone | After deterministic run |
+| `validate_model_outputs()` | Costs/QALYs non-negative, survival valid | After first run |
+| `generate_validation_report()` | All of the above + score | Before publication |
+
+## Setup
+
+```{r load}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+params <- m$default_params()
+```
+
+## 1. Transition Matrix Checks
+
+For Markov cohort models, the trace matrix must satisfy fundamental
+properties. Every row represents a cycle's state distribution and must
+sum to 1. No entry can be negative. The death state must be monotone
+non-decreasing (people don't come back from death).
+
+```{r trace-check}
+pars <- stats::setNames(as.list(params$base), params$name)
+res <- m$simulate(pars, "std")
+
+checks <- check_transition_matrix(res$trace)
+checks[, c("check", "status", "details")]
+```
+
+For partitioned survival models (no trace returned), the function reports
+the absence rather than failing:
+
+```{r trace-ps}
+m_ps <- cea_partitioned_survival()
+pars_ps <- stats::setNames(as.list(m_ps$default_params()$base),
+                            m_ps$default_params()$name)
+res_ps <- m_ps$simulate(pars_ps, "std")
+check_transition_matrix(res_ps$trace)[, c("check", "status")]
+```
+
+## 2. Probability Checks
+
+Probabilities must be in [0, 1], and groups of mutually exclusive
+transition probabilities from the same state must sum to at most 1.
+
+```{r prob-check}
+checks <- check_probabilities_sum(params)
+checks[, c("check", "status", "details")]
+```
+
+You can specify custom groups when auto-detection doesn't capture
+your model's state-transition structure:
+
+```{r prob-groups}
+custom_groups <- list(
+  "from_H" = c("p_HS_std", "p_HD_std"),
+  "from_S1" = c("p_S1S2_std", "p_S1D_std")
+)
+checks <- check_probabilities_sum(params, prob_groups = custom_groups)
+checks[checks$check != "Probability params found", c("check", "status", "details")]
+```
+
+### Common errors caught
+
+- A probability of 1.5 (data entry error)
+- Three transitions from one state summing to 1.2 (missing complement)
+- A negative probability (sign error in a formula)
+
+## 3. Discounting Checks
+
+Discounting should reduce future costs and QALYs. The check compares
+outputs with and without discounting and verifies that discount rate
+parameters exist and are in a reasonable range.
+
+```{r discount-check}
+checks <- check_discounting(m, params)
+checks[, c("check", "status", "details")]
+```
+
+### What this catches
+
+- Discounting applied in the wrong direction (discounted > undiscounted)
+- Discount rate set to an implausible value (e.g., 30%)
+- Missing discount rate parameter (model always uses 0%)
+
+## 4. PSA Input Validation
+
+Before running a 10,000-iteration PSA, verify that every PSA-eligible
+parameter has an appropriate distribution, domain-consistent bounds,
+and reasonable uncertainty width.
+
+```{r psa-check}
+checks <- check_psa_inputs(params)
+checks[, c("check", "status", "details")]
+```
+
+### Common errors caught
+
+- Beta distribution with mean outside (0, 1)
+- Gamma distribution with negative mean
+- `include_psa = TRUE` but `distribution = "fixed"`
+- Bounds spanning 10x the mean (excessively wide uncertainty)
+- No bounds or SE provided (can't derive distribution shape)
+
+## 5. Dominance Logic
+
+After running the deterministic analysis, verify that the frontier
+analysis correctly classifies strategies as dominated, extendedly
+dominated, or on the frontier.
+
+```{r dominance-check}
+det <- run_deterministic(m, params, wtp = 100000)
+checks <- check_dominance_logic(det)
+checks[, c("check", "status", "details")]
+```
+
+### What this catches
+
+- A strategy classified as "Dominated" that isn't actually dominated
+  by any frontier strategy
+- Sequential ICERs along the frontier that are not monotonically
+  increasing (indicates an extended dominance error)
+- Reference strategy that doesn't have the maximum NMB
+
+## 6. Model Output Validation
+
+Runs all strategies at base case and checks that costs, QALYs, trace,
+and survival outputs are plausible and internally consistent.
+
+```{r output-check}
+checks <- validate_model_outputs(m, params)
+checks[, c("check", "status", "details")]
+```
+
+### What this catches
+
+- Negative costs or QALYs
+- QALYs exceeding the time horizon (e.g., 15 QALYs in a 10-year model)
+- Costs exceeding $5M per patient (flags for review, not necessarily wrong)
+- Survival not starting at 1.0
+- Survival outside [0, 1]
+- OS < PFS at any time point
+- Trace rows not summing to 1
+
+## 7. Comprehensive Validation Report
+
+`generate_validation_report()` runs ALL checks and compiles them into a
+single report with a quality score.
+
+```{r full-report}
+report <- generate_validation_report(m)
+
+cat("Model:", report$model_name, "\n")
+cat("Score:", report$score, "/ 100\n\n")
+print(report$summary)
+```
+
+### Scoring
+
+| Finding | Penalty |
+|:--------|:-------|
+| Each FAIL | -5 points |
+| Each WARN | -1 point |
+| PASS | No penalty |
+| Starting score | 100 |
+
+A score of **80+** indicates a model ready for analysis. Below 80,
+address the FAILs before proceeding.
+
+### Detailed results
+
+```{r report-details}
+# Show non-PASS findings
+issues <- report$details[report$details$status != "PASS", ]
+if (nrow(issues) > 0) {
+  issues[, c("category", "check", "status", "details")]
+} else {
+  cat("No issues found.\n")
+}
+```
+
+### Export to Markdown
+
+```{r export, eval = FALSE}
+generate_validation_report(m, output_file = "validation_report.md")
+```
+
+This produces a formatted markdown file with sections for each check
+category, suitable for inclusion in an HTA submission appendix or
+internal quality documentation.
+
+## Validation Workflow
+
+The recommended workflow for model QA:
+
+```
+1. Define parameters
+   └─→ validate_param_table() + check_probabilities_sum() + check_psa_inputs()
+
+2. Build model
+   └─→ validate_cea_model() (automatic in new_cea_model())
+
+3. First simulation
+   └─→ validate_model_outputs() + check_transition_matrix()
+
+4. Deterministic analysis
+   └─→ check_dominance_logic() + check_discounting()
+
+5. Before PSA
+   └─→ check_psa_inputs() (re-run after parameter edits)
+
+6. Before publication
+   └─→ generate_validation_report() → score >= 80
+```
+
+## Integration with HTA Submissions
+
+The validation report maps to standard HTA requirements:
+
+| ShinyCEA check | AdViSHE domain | ISPOR-SMDM TF |
+|:--------------|:---------------|:---------------|
+| `check_transition_matrix()` | Internal validity | Siebert et al. 2012 |
+| `check_probabilities_sum()` | Internal validity | Karnon et al. 2012 |
+| `check_discounting()` | Internal validity | Weinstein et al. 2003 |
+| `check_psa_inputs()` | Uncertainty analysis | Briggs et al. 2012 |
+| `check_dominance_logic()` | Internal validity | Caro et al. 2012 |
+| `validate_model_outputs()` | Face validity | Eddy et al. 2012 |
+| `generate_validation_report()` | Cross-validation | Vemer et al. 2016 |
+
+## References
+
+- Eddy, D. M., et al. (2012). Model transparency and validation: a
+  report of the ISPOR-SMDM Modeling Good Research Practices Task Force.
+  *Medical Decision Making*, 32(5), 733-743.
+- Vemer, P., et al. (2016). AdViSHE: A validation-loss assessment tool
+  of health-economic models for decision makers and model users.
+  *PharmacoEconomics*, 34(4), 349-361.
+- Briggs, A. H., et al. (2012). Model parameter estimation and
+  uncertainty analysis: a report of the ISPOR-SMDM Modeling Good
+  Research Practices Task Force. *Medical Decision Making*, 32(5),
+  722-732.
+- Siebert, U., et al. (2012). State-transition modeling: a report of
+  the ISPOR-SMDM Modeling Good Research Practices Task Force. *Medical
+  Decision Making*, 32(5), 690-700.
+- Caro, J. J., et al. (2012). Modeling good research practices. *Medical
+  Decision Making*, 32(5), 667-677.

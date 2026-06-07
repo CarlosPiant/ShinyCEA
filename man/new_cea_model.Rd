@@ -4,7 +4,16 @@
 \alias{new_cea_model}
 \title{Create a CEA Model}
 \usage{
-new_cea_model(info, params, simulate, diagram = NULL, description = NULL)
+new_cea_model(
+  info,
+  params,
+  simulate,
+  diagram = NULL,
+  description = NULL,
+  composites = NULL,
+  subgroups = NULL,
+  scenarios = NULL
+)
 }
 \arguments{
 \item{info}{A function returning list(key, name, strategies).}
@@ -16,6 +25,19 @@ new_cea_model(info, params, simulate, diagram = NULL, description = NULL)
 \item{diagram}{Optional path to a diagram image file (PNG/SVG).}
 
 \item{description}{Optional character string or path to a markdown file describing the model.}
+
+\item{composites}{Optional named list of predefined weighted composites for
+the Weighted Comparator tab. Each element is a named numeric vector of
+strategy weights that sum to 1. Example:
+\code{list("Current SoC" = c(std = 0.6, t1 = 0.4), "New drug" = c(t2 = 1))}.}
+
+\item{subgroups}{Optional named list of predefined subgroups for the
+Subgroups tab. Each element is a named list of parameter overrides.
+Example: \code{list("High risk" = list(p_prog = 0.1), "Low risk" = list(p_prog = 0.02))}.}
+
+\item{scenarios}{Optional named list of predefined scenarios for the
+Scenarios tab. Each element is a named list of parameter overrides.
+Example: \code{list("No discount" = list(d_cost = 0, d_qaly = 0))}.}
 }
 \value{
 A validated \code{cea_model} object.

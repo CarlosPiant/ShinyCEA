@@ -1,0 +1,205 @@
+---
+title: "Weighted Comparator Analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Weighted Comparator Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+In many real-world CEA settings, the relevant comparator is not a single
+treatment but a **mix of treatments** currently in use. For example, when a
+new oncology drug enters the market, it doesn't replace one specific drug ---
+it replaces a portfolio of existing options used at different frequencies.
+This vignette demonstrates how to define, evaluate, and compare weighted
+composites of strategies using ShinyCEA.
+
+## When to Use Weighted Comparators
+
+Weighted comparator analysis is relevant when:
+
+1. **The current standard of care is heterogeneous.** In clinical practice,
+   patients receive a mix of treatments. The relevant comparison for a new
+   drug is against this real-world mix, not against any single treatment in
+   isolation.
+
+2. **Formulary or reimbursement decisions.** Payers may want to compare a
+   new treatment against the current formulary distribution (e.g., 50% generic
+   A + 30% branded B + 20% branded C).
+
+3. **Treatment protocols combine therapies.** A new protocol might specify
+   a different allocation (e.g., 70% new drug + 30% existing drug as backup)
+   vs. the current protocol (100% existing drug).
+
+4. **Market-share-based comparisons.** When the comparator should reflect
+   actual market shares rather than an idealized single-drug comparison.
+
+This approach follows recommendations from NICE (2022) and CADTH (2017) for
+defining mixed comparators in technology appraisals.
+
+## Setup
+
+```{r load}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+cat("Strategies:", paste(m$info()$strategies, collapse = ", "))
+```
+
+The Sick-Sicker model has 5 strategies: `std` (standard of care), and 4
+treatments (`t1` through `t4`) with different efficacy and cost profiles.
+
+## Defining Composites
+
+A composite is a named vector of strategy weights that sum to 1. Each weight
+represents the proportion of patients receiving that strategy.
+
+```{r define}
+composites <- list(
+  "Current SoC" = c(std = 0.60, t1 = 0.20, t2 = 0.10, t3 = 0.10),
+  "New drug alone" = c(t4 = 1.00),
+  "New protocol" = c(t4 = 0.70, t2 = 0.30)
+)
+```
+
+Three composites are defined:
+
+- **Current SoC**: 60% standard + 20% treatment 1 + 10% each of treatments
+  2 and 3. This represents the real-world treatment mix before the new drug
+  arrives.
+- **New drug alone**: 100% of patients on treatment 4. This represents
+  complete displacement of all existing options.
+- **New protocol**: 70% treatment 4 + 30% treatment 2 as backup. This
+  represents a realistic adoption scenario where some patients remain on an
+  existing treatment.
+
+## Running the Analysis
+
+```{r run}
+res <- run_weighted_analysis(m, m$default_params(), composites, wtp = 100000)
+```
+
+### Composite Results
+
+The composite results table shows the weighted-average cost, QALY, and NMB
+for each composite:
+
+```{r results}
+res$composites
+```
+
+### Strategy Contributions
+
+The details table breaks down each composite's cost and QALYs by the
+contributing strategies:
+
+```{r details}
+res$details
+```
+
+## Visualizations
+
+### Cost and QALY Breakdown
+
+Stacked bar charts show how each strategy contributes to the composite's
+total cost and QALYs:
+
+```{r cost-plot}
+plot_weighted_comparison(res$details, metric = "Cost")
+```
+
+```{r qaly-plot}
+plot_weighted_comparison(res$details, metric = "QALY")
+```
+
+These plots make it immediately visible which strategies drive costs and
+which drive health outcomes within each composite.
+
+### Pairwise Comparisons
+
+The pairwise table shows incremental costs, QALYs, ICERs, and INBs between
+every pair of composites:
+
+```{r pairwise}
+res$pairwise[, c("Reference", "Comparator", "IncCost", "IncQALY", "ICER", "INB")]
+```
+
+### Pairwise Forest Plot
+
+The forest plot visualizes all pairwise comparisons on a single axis:
+
+```{r forest-inb}
+plot_weighted_pairwise(res$pairwise, metric = "INB", wtp = 100000)
+```
+
+```{r forest-icer}
+plot_weighted_pairwise(res$pairwise, metric = "ICER", wtp = 100000)
+```
+
+## Interpretation
+
+From the results above:
+
+- **New drug alone vs. Current SoC**: The ICER tells us whether completely
+  replacing the current treatment mix with the new drug is cost-effective.
+- **New protocol vs. Current SoC**: The ICER for the 70/30 mix reflects a
+  more realistic adoption pattern and may be more relevant for decision-makers.
+- **New drug alone vs. New protocol**: This comparison tells us whether the
+  marginal patients (the 30% who would stay on t2 in the new protocol)
+  should also switch to t4.
+
+The INB forest plot makes it easy to see which comparisons favor the new
+intervention (positive INB) and by how much.
+
+## Combining with Other Analyses
+
+### Scenarios with Weighted Comparators
+
+Use the scenario manager to test whether the choice of comparator mix
+matters:
+
+```{r scenarios, eval = FALSE}
+# Does the conclusion change if Current SoC is 80% std + 20% t1
+# instead of the base 60/20/10/10?
+composites_alt <- list(
+  "SoC (conservative)" = c(std = 0.80, t1 = 0.20),
+  "New drug" = c(t4 = 1)
+)
+res_alt <- run_weighted_analysis(m, m$default_params(), composites_alt, wtp = 100000)
+```
+
+### Budget Impact with Weighted Composites
+
+The BIA tab uses market shares directly --- the weighted comparator analysis
+tells you *whether* to adopt the new mix; the BIA tells you *what it costs*
+to transition the population over time.
+
+## Methodology
+
+The weighted cost and QALY for a composite $C$ with $K$ strategies are:
+
+$$\text{Cost}_C = \sum_{k=1}^K w_k \cdot C_k, \quad
+\text{QALY}_C = \sum_{k=1}^K w_k \cdot Q_k$$
+
+where $w_k$ is the weight (market share) and $C_k$, $Q_k$ are the
+per-patient cost and QALY for strategy $k$.
+
+The incremental cost-effectiveness of composite $B$ vs. composite $A$ is:
+
+$$\text{ICER}_{B \text{ vs } A} =
+\frac{\text{Cost}_B - \text{Cost}_A}{\text{QALY}_B - \text{QALY}_A}$$
+
+This is equivalent to comparing the weighted-average patient in each
+composite, which is the standard approach for mixed comparators in HTA
+(Drummond et al., 2015).
+
+## References
+
+- CADTH (2017). *Guidelines for the Economic Evaluation of Health
+  Technologies: Canada* (4th ed.).
+- Drummond, M. F., et al. (2015). *Methods for the Economic Evaluation of
+  Health Care Programmes* (4th ed.). Oxford University Press.
+- NICE (2022). *NICE Health Technology Evaluations: The Manual*.
