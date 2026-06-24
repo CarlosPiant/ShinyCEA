@@ -76,6 +76,9 @@ twoway_dsa <- function(model, base_pars, param1, param2,
   list(
     grid = result,
     param1 = param1, param2 = param2,
+    # Store the true base-case values so plots can mark the actual base point
+    # (not the grid midpoint).
+    base1 = base_pars[[param1]], base2 = base_pars[[param2]],
     ref = ref, target = target,
     metric = metric, wtp = wtp
   )
@@ -105,7 +108,7 @@ plot_twoway_dsa <- function(twoway_result, show_contour = TRUE, palette = NULL) 
   if (metric == "INB") {
     fill_label <- paste0("INB (", target, " vs ", ref, ")")
     contour_level <- 0
-    subtitle <- "Green = cost-effective; Red = not cost-effective"
+    subtitle <- "Cost-effective where INB > 0; dashed line = threshold; x = base case"
   } else {
     fill_label <- paste0("ICER (", target, " vs ", ref, ")")
     contour_level <- twoway_result$wtp
@@ -152,10 +155,15 @@ plot_twoway_dsa <- function(twoway_result, show_contour = TRUE, palette = NULL) 
     }
   }
 
-  # Mark base case
+  # Mark the TRUE base case (stored by twoway_dsa). Fall back to the grid
+  # midpoint only for older result objects that lack base1/base2.
+  base_x <- twoway_result$base1
+  base_y <- twoway_result$base2
+  if (is.null(base_x)) base_x <- df[[p1_name]][ceiling(nrow(df) / 2)]
+  if (is.null(base_y)) base_y <- df[[p2_name]][ceiling(nrow(df) / 2)]
   p <- p + ggplot2::annotate(
-    "point", x = df[[p1_name]][ceiling(nrow(df) / 2)],
-    y = df[[p2_name]][ceiling(nrow(df) / 2)],
+    "point", x = base_x,
+    y = base_y,
     shape = 4, size = 3, color = "black", stroke = 1.5
   )
 

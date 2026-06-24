@@ -605,6 +605,25 @@ generate_validation_report <- function(model, params_df = NULL, wtp = 100000,
     all_checks <- c(all_checks, list(param_checks))
   }
 
+  # 7. Half-cycle correction
+  hcc_checks <- tryCatch(check_half_cycle(model, params_df),
+                          error = function(e) NULL)
+  if (!is.null(hcc_checks)) all_checks <- c(all_checks, list(hcc_checks))
+
+  # 8. PH assumption
+  ph_checks <- tryCatch(check_ph_assumption(model, params_df),
+                         error = function(e) NULL)
+  if (!is.null(ph_checks)) all_checks <- c(all_checks, list(ph_checks))
+
+  # 9. Scenario robustness (if model has predefined scenarios)
+  if (!is.null(model$scenarios) && length(model$scenarios) >= 2) {
+    sc_checks <- tryCatch(
+      check_scenario_robustness(model, params_df, model$scenarios, wtp),
+      error = function(e) NULL
+    )
+    if (!is.null(sc_checks)) all_checks <- c(all_checks, list(sc_checks))
+  }
+
   # Combine
   details <- do.call(rbind, all_checks)
   rownames(details) <- NULL
