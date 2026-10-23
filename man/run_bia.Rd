@@ -11,7 +11,8 @@ run_bia(
   current_mix,
   new_mix,
   years = 5L,
-  annual_growth = 0
+  annual_growth = 0,
+  horizon_years = NULL
 )
 }
 \arguments{
@@ -30,6 +31,13 @@ run_bia(
 \item{years}{Number of years to project (default 5).}
 
 \item{annual_growth}{Annual population growth rate (default 0).}
+
+\item{horizon_years}{Length in years of the model's time horizon. The
+model's \code{simulate()} returns the (discounted) cost per patient over its
+whole horizon; the BIA needs a cost per patient per year, so the lifetime
+cost is divided by this horizon (an average annual cost). Taken from
+\code{model$info()$horizon} or the \code{time_horizon} parameter when \code{NULL}.
+(Review finding D1: the lifetime cost used to be charged every year.)}
 }
 \value{
 A list with:

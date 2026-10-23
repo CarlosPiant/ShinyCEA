@@ -74,8 +74,9 @@ cea_partitioned_survival <- function() {
     S_pfs <- weib_S(tgrid, shape = ps, scale = pfs_scale_t)
     S_os <- weib_S(tgrid, shape = os_shape, scale = os_scale_t)
 
-    PF <- pmax(S_pfs, 0)
-    Prog <- pmax(S_os - S_pfs, 0)
+    # Progression-free survival cannot exceed overall survival (E13).
+    PF <- pmax(pmin(S_pfs, S_os), 0)
+    Prog <- pmax(S_os - PF, 0)
 
     u_PF <- as.numeric(.nc(pars[["u_PF"]], 0.82))
     u_Prog <- as.numeric(.nc(pars[["u_Prog"]], 0.60))
@@ -85,15 +86,17 @@ cea_partitioned_survival <- function() {
 
     d_c <- as.numeric(.nc(pars[["d_cost"]], 0.03))
     d_q <- as.numeric(.nc(pars[["d_qaly"]], 0.03))
-    n_t <- length(tgrid)
-    w_c <- cea_discount_weights(n_t, rate = d_c, cycle_length = cl, first_cycle = 0L)
-    w_q <- cea_discount_weights(n_t, rate = d_q, cycle_length = cl, first_cycle = 0L)
-    qaly <- sum((PF * u_PF + Prog * u_Prog) * w_q) * cl
-    cost <- sum((PF * (c_PF + drug) + Prog * (c_Prog + drug)) * w_c) * cl
+    # One cycle per interval between grid points, valued at the end of the
+    # cycle like the Markov models (the grid used to add one extra cycle, E13).
+    n_c <- length(tgrid) - 1L
+    w_c <- cea_discount_weights(n_c, rate = d_c, cycle_length = cl)
+    w_q <- cea_discount_weights(n_c, rate = d_q, cycle_length = cl)
+    qaly <- sum((PF[-1] * u_PF + Prog[-1] * u_Prog) * w_q) * cl
+    cost <- sum((PF[-1] * (c_PF + drug) + Prog[-1] * (c_Prog + drug)) * w_c) * cl
 
     survival <- rbind(
       data.frame(time = tgrid, surv = as.numeric(S_os), curve = "OS", stringsAsFactors = FALSE),
-      data.frame(time = tgrid, surv = as.numeric(S_pfs), curve = "PFS", stringsAsFactors = FALSE)
+      data.frame(time = tgrid, surv = as.numeric(PF), curve = "PFS", stringsAsFactors = FALSE)
     )
 
     list(cost = as.numeric(cost), qaly = as.numeric(qaly),

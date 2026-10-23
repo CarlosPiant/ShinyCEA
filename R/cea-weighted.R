@@ -149,7 +149,7 @@ run_weighted_analysis <- function(model, params_df, composites, wtp = 100000) {
 #' @export
 plot_weighted_comparison <- function(detail_df, metric = c("Cost", "QALY"),
                                      palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   metric <- match.arg(metric)
 
   col <- if (metric == "Cost") "Cost_Weighted" else "QALY_Weighted"
@@ -163,7 +163,7 @@ plot_weighted_comparison <- function(detail_df, metric = c("Cost", "QALY"),
     ggplot2::labs(x = NULL, y = y_label,
                   title = paste0("Weighted ", metric, " by Composite"),
                   fill = "Strategy") +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom",
                    panel.grid.major.x = ggplot2::element_blank())
 }
@@ -178,7 +178,7 @@ plot_weighted_comparison <- function(detail_df, metric = c("Cost", "QALY"),
 #' @export
 plot_weighted_pairwise <- function(pairwise_df, metric = c("ICER", "INB"),
                                    wtp = 100000, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   metric <- match.arg(metric)
 
   if (nrow(pairwise_df) == 0) {
@@ -231,7 +231,7 @@ plot_weighted_pairwise <- function(pairwise_df, metric = c("ICER", "INB"),
     ) +
     ggplot2::labs(x = x_label, y = NULL,
                   title = paste0("Pairwise ", metric, " Comparison")) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom",
                    panel.grid.major.y = ggplot2::element_blank())
 }

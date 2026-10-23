@@ -8,23 +8,23 @@ cea_app_server <- function(models) {
 
     # --- Palette ---
     current_palette <- shiny::reactive({
-      choice <- .nc(input$palette_choice, "uw")
+      choice <- .nc(input$palette_choice, "cream")
       if (choice == "custom") {
         strat_colors <- c(
-          .nc(input$custom_color_1, "#2C3E50"),
-          .nc(input$custom_color_2, "#E74C3C"),
-          .nc(input$custom_color_3, "#27AE60"),
-          .nc(input$custom_color_4, "#3498DB"),
-          .nc(input$custom_color_5, "#9B59B6"),
-          .nc(input$custom_color_6, "#F39C12"),
-          .nc(input$custom_color_7, "#1ABC9C"),
-          .nc(input$custom_color_8, "#E67E22")
+          .nc(input$custom_color_1, "#18213d"),
+          .nc(input$custom_color_2, "#1aa3a1"),
+          .nc(input$custom_color_3, "#c0652d"),
+          .nc(input$custom_color_4, "#2a56a3"),
+          .nc(input$custom_color_5, "#2e7d32"),
+          .nc(input$custom_color_6, "#c62828"),
+          .nc(input$custom_color_7, "#696d74"),
+          .nc(input$custom_color_8, "#3f7f8e")
         )
         cea_palette_custom(
           strategies = strat_colors,
-          frontier = .nc(input$custom_frontier, "#2C3E50"),
-          dominated = .nc(input$custom_dominated, "#E74C3C"),
-          ext_dominated = .nc(input$custom_ext_dom, "#F39C12")
+          frontier = .nc(input$custom_frontier, "#18213d"),
+          dominated = .nc(input$custom_dominated, "#c62828"),
+          ext_dominated = .nc(input$custom_ext_dom, "#c0652d")
         )
       } else {
         cea_palette(choice)
@@ -56,10 +56,10 @@ cea_app_server <- function(models) {
         ggplot2::geom_col(width = 0.6, alpha = 0.85) +
         ggplot2::scale_fill_manual(values = pal$strategies[seq_len(n)]) +
         ggplot2::labs(x = NULL, y = NULL, title = "Palette preview") +
-        ggplot2::theme_minimal(base_size = 12) +
+        theme_cea() +
         ggplot2::theme(legend.position = "none",
                        panel.grid.major.x = ggplot2::element_blank())
-    })
+    }, bg = "transparent")
 
     # --- Current model ---
     current_model <- shiny::reactive({
@@ -74,6 +74,17 @@ cea_app_server <- function(models) {
     # --- Parameters (editable) ---
     params_rv <- shiny::reactiveVal(NULL)
 
+    # Run results. They are stored in reactiveVals (not eventReactives) so
+    # that a model switch can clear them and a later edit can mark them stale
+    # (review findings E1, E3): results always belong to the model and inputs
+    # they were computed from.
+    det_rv <- shiny::reactiveVal(NULL)
+    psa_rv <- shiny::reactiveVal(NULL)
+    psa_state <- shiny::reactiveValues(draws = NULL, dropped = 0L)
+    stale <- shiny::reactiveVal(FALSE)
+    det_result <- shiny::reactive(det_rv())
+    psa_results <- shiny::reactive(psa_rv())
+
     shiny::observe({
       mod <- current_model()
       s <- sanitize_params(mod$default_params())
@@ -81,17 +92,27 @@ cea_app_server <- function(models) {
       if (length(s$notes)) {
         shiny::showNotification(paste(s$notes, collapse = " | "), type = "message", duration = 6)
       }
-      # Load predefined composites, scenarios, and subgroups from the model
-      if (!is.null(mod$composites) && is.list(mod$composites)) {
-        wc_store(mod$composites)
-      }
-      if (!is.null(mod$scenarios) && is.list(mod$scenarios)) {
-        sc_store(mod$scenarios)
-      }
-      if (!is.null(mod$subgroups) && is.list(mod$subgroups)) {
-        sg_store(mod$subgroups)
-      }
+      # Predefined composites, scenarios and subgroups belong to this model:
+      # always replace the stores, so a model without them starts empty (E6).
+      wc_store(if (is.list(mod$composites)) mod$composites else list())
+      sc_store(if (is.list(mod$scenarios)) mod$scenarios else list())
+      sg_store(if (is.list(mod$subgroups)) mod$subgroups else list())
+      # Results of the previous model are not comparable: drop them (E1).
+      det_rv(NULL); psa_rv(NULL); psa_state$draws <- NULL; psa_state$dropped <- 0L
+      stale(FALSE)
     })
+
+    # Any change of the inputs after a run makes the displayed results stale;
+    # the banner in the results tabs says so until the user runs again.
+    shiny::observeEvent(list(params_rv(), input$wtp, input$ref_mode, input$ref_pinned), {
+      if (!is.null(det_rv()) || !is.null(psa_rv())) stale(TRUE)
+    }, ignoreInit = TRUE)
+    stale_banner <- function() {
+      if (!isTRUE(stale())) return(NULL)
+      shiny::div(class = "cea-stale",
+                 "Inputs changed since this run (parameter table, WTP or reference). ",
+                 "The results below are for the previous inputs: run again to update them.")
+    }
 
     shiny::observeEvent(input$param_file, {
       shiny::req(input$param_file$datapath)
@@ -101,10 +122,26 @@ cea_app_server <- function(models) {
       if (length(s$notes)) {
         shiny::showNotification(paste(s$notes, collapse = " | "), type = "message", duration = 6)
       }
+      # The model reads parameters by name and silently uses built-in defaults
+      # for names it does not find (E7): say which names are missing.
+      expected <- tryCatch(current_model()$default_params()$name, error = function(e) character(0))
+      missing_p <- setdiff(expected, s$df$name)
+      if (length(missing_p)) {
+        shiny::showNotification(
+          paste0("The file does not define ", length(missing_p), " parameter(s) of this model (",
+                 paste(utils::head(missing_p, 6), collapse = ", "),
+                 if (length(missing_p) > 6) ", ..." else "", "); the model will use its built-in ",
+                 "defaults for them. See the Health tab."),
+          type = "warning", duration = 12)
+      }
     })
 
     output$param_table <- DT::renderDT({
-      DT::datatable(params_rv(), editable = "cell",
+      df <- params_rv()
+      # Names are the contract with the model (E7) and the row-number column
+      # has no data behind it (E8): neither is editable.
+      locked <- c(0L, which(names(df) %in% c("name", "distribution")))
+      DT::datatable(df, editable = list(target = "cell", disable = list(columns = locked)),
                     options = list(pageLength = 14, scrollX = TRUE))
     }, server = TRUE)
 
@@ -112,10 +149,30 @@ cea_app_server <- function(models) {
     shiny::observeEvent(input$param_table_cell_edit, {
       info <- input$param_table_cell_edit
       df <- params_rv()
-      v <- info$value
       col_name <- names(df)[info$col]
-      if (col_name %in% c("mean", "sd", "lower", "upper", "base")) v <- as.numeric(v)
-      if (col_name %in% c("include_psa", "include_tornado")) v <- as.logical(as.character(v))
+      if (!length(col_name) || is.na(col_name)) return()     # row-number column
+      v <- info$value
+      reject <- function(msg) {
+        shiny::showNotification(msg, type = "error", duration = 6)
+        DT::replaceData(proxy, df, resetPaging = FALSE)      # show the stored value again
+      }
+      if (col_name %in% c("mean", "sd", "lower", "upper", "base")) {
+        v <- .parse_numeric(v)$value
+        if (!is.finite(v)) return(reject(paste0("'", info$value, "' is not a number.")))
+      }
+      if (col_name %in% c("include_psa", "include_tornado")) {
+        v <- .parse_logical(v)$value
+        if (is.na(v)) return(reject(paste0("'", info$value, "' is not TRUE/FALSE.")))
+      }
+      # The deterministic run uses `base`, the PSA is centred on `mean` and the
+      # tornado on the bounds. When these columns held the same value before
+      # the edit they describe one quantity, so they move together (E4).
+      if (col_name %in% c("mean", "base")) {
+        old <- df[[col_name]][info$row]
+        for (linked in c("mean", "lower", "upper", "base")) {
+          if (isTRUE(all.equal(df[[linked]][info$row], old))) df[[linked]][info$row] <- v
+        }
+      }
       df[info$row, info$col] <- v
       params_rv(df)
       DT::replaceData(proxy, df, resetPaging = FALSE)
@@ -127,6 +184,12 @@ cea_app_server <- function(models) {
     )
 
     # --- Model Info ---
+    # Model name shown in the top bar (filled once a model is selected).
+    output$topbar_model <- shiny::renderUI({
+      shiny::req(current_model())
+      shiny::tagList("Model: ", shiny::tags$b(current_model()$info()$name))
+    })
+
     output$model_info_title <- shiny::renderUI({
       shiny::req(current_model())
       shiny::h3(current_model()$info()$name)
@@ -181,7 +244,7 @@ cea_app_server <- function(models) {
 
     output$health_table <- DT::renderDT({
       df <- health_df()
-      status_colors <- c(PASS = "#1b9e77", WARN = "#d95f02", FAIL = "#d73027")
+      status_colors <- c(PASS = "#2e7d32", WARN = "#c0652d", FAIL = "#c62828")  # design tokens
       DT::datatable(df, rownames = FALSE,
                     options = list(pageLength = 12, scrollX = TRUE)) |>
         DT::formatStyle("status",
@@ -192,21 +255,38 @@ cea_app_server <- function(models) {
     })
 
     # --- Deterministic results ---
-    det_result <- shiny::eventReactive(input$run_det, {
-      cat("[ShinyCEA] eventReactive START\n", file = stderr())
+    shiny::observeEvent(input$run_det, {
+      wtp <- suppressWarnings(as.numeric(input$wtp))
+      if (!is.finite(wtp) || wtp < 0) {
+        shiny::showNotification("Enter a willingness-to-pay threshold (>= 0) before running.",
+                                type = "error", duration = 6)
+        return()
+      }
       ref <- if (identical(input$ref_mode, "pinned")) input$ref_pinned else NULL
-      t0 <- proc.time()
-      res <- run_deterministic(current_model(), params_rv(),
-                               wtp = input$wtp, ref_strategy = ref)
-      cat("[ShinyCEA] eventReactive DONE in", (proc.time() - t0)[3], "s\n", file = stderr())
-      res
+      res <- tryCatch(run_deterministic(current_model(), params_rv(), wtp = wtp, ref_strategy = ref),
+                      error = function(e) e)
+      if (inherits(res, "error")) {
+        shiny::showNotification(paste("Deterministic run failed:", conditionMessage(res)),
+                                type = "error", duration = 12)
+        return()
+      }
+      # Remember the inputs of the run: dependent analyses (tornado, two-way,
+      # threshold) must use the WTP and reference of this run, not live inputs.
+      res$wtp <- wtp
+      res$ref_mode <- input$ref_mode
+      res$model_key <- current_model()$info()$key
+      det_rv(res)
+      stale(FALSE)
     })
 
     output$ref_text <- shiny::renderUI({
       shiny::req(det_result())
-      mode_label <- if (identical(input$ref_mode, "auto")) "(auto: max NMB)" else "(pinned)"
-      shiny::HTML(paste0("<h4>Reference: <span style='color:#4b2e83;'>",
-                         det_result()$ref, "</span> ", mode_label, "</h4>"))
+      mode_label <- if (identical(det_result()$ref_mode, "auto")) "(auto: max NMB)" else "(pinned)"
+      shiny::tagList(
+        stale_banner(),
+        shiny::HTML(paste0("<h4>Reference: <span class='cea-ref'>",
+                           det_result()$ref, "</span> ", mode_label,
+                           " at WTP ", format(det_result()$wtp, big.mark = ",", scientific = FALSE), "</h4>")))
     })
 
     output$det_table <- DT::renderDT({
@@ -257,13 +337,13 @@ cea_app_server <- function(models) {
       shiny::validate(shiny::need(tgt %in% strategies, "Invalid target strategy."))
 
       df <- params_rv()
-      df_tor <- df[df$include_tornado == TRUE & (is.finite(df$lower) | is.finite(df$upper)), ]
+      df_tor <- df[df$include_tornado %in% TRUE & (is.finite(df$lower) | is.finite(df$upper)), ]
       if (nrow(df_tor) == 0) return(NULL)
 
       tor_df <- build_tornado_data(
         df_tor, det_result()$pars, current_model(),
         det_result()$ref, tgt,
-        metric = input$tornado_metric, wtp = input$wtp
+        metric = input$tornado_metric, wtp = det_result()$wtp
       )
       if (is.null(tor_df) || nrow(tor_df) == 0) return(NULL)
 
@@ -283,7 +363,7 @@ cea_app_server <- function(models) {
       p <- tornado_plot_obj()
       shiny::validate(shiny::need(!is.null(p), "Run deterministic analysis first; ensure parameters have tornado bounds."))
       print(p)
-    })
+    }, bg = "transparent")
 
     output$download_tornado_png <- shiny::downloadHandler(
       filename = function() "tornado.png",
@@ -298,7 +378,8 @@ cea_app_server <- function(models) {
     output$twoway_controls <- shiny::renderUI({
       shiny::req(det_result())
       df <- params_rv()
-      candidates <- df$name[df$include_tornado & (is.finite(df$lower) | is.finite(df$upper))]
+      # Two-way grids need both bounds; NA flags are not TRUE (E12).
+      candidates <- df$name[df$include_tornado %in% TRUE & is.finite(df$lower) & is.finite(df$upper)]
       shiny::req(length(candidates) >= 2)
 
       strategies <- det_result()$strategies
@@ -340,14 +421,14 @@ cea_app_server <- function(models) {
         range2 = c(r2_row$lower, r2_row$upper),
         n_grid = as.integer(.nc(input$tw_n, 20)),
         ref = det_result()$ref, target = input$tw_target,
-        wtp = input$wtp, metric = input$tw_metric
+        wtp = det_result()$wtp, metric = input$tw_metric
       )
     })
 
     output$twoway_plot <- shiny::renderPlot({
       shiny::req(twoway_result())
       print(plot_twoway_dsa(twoway_result(), palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$download_twoway_png <- shiny::downloadHandler(
       filename = function() "twoway_dsa.png",
@@ -367,7 +448,7 @@ cea_app_server <- function(models) {
     output$ce_frontier_plot <- shiny::renderPlot({
       shiny::req(ce_frontier_obj())
       print(ce_frontier_obj())
-    })
+    }, bg = "transparent")
 
     output$download_frontier_png <- shiny::downloadHandler(
       filename = function() "ce_frontier.png",
@@ -408,21 +489,36 @@ cea_app_server <- function(models) {
       )
     })
 
+    # The grid limits follow the chosen parameter (they used to come from the
+    # first row whatever the choice, E9).
+    shiny::observeEvent(input$thr_param, {
+      df <- params_rv(); row <- df[df$name == input$thr_param, ]
+      shiny::req(nrow(row) == 1)
+      shiny::updateNumericInput(session, "thr_min",
+        value = if (is.finite(row$lower)) row$lower else row$base * 0.5)
+      shiny::updateNumericInput(session, "thr_max",
+        value = if (is.finite(row$upper)) row$upper else row$base * 1.5)
+    })
+
     threshold_result <- shiny::eventReactive(input$run_threshold, {
       shiny::req(det_result())
-      threshold_analysis(
+      res <- threshold_analysis(
         current_model(), det_result()$pars, input$thr_param,
         det_result()$ref, input$thr_strategy,
         input$thr_min, input$thr_max, input$thr_grid_n,
-        wtp = input$wtp, mode = input$thr_mode
+        wtp = det_result()$wtp, mode = input$thr_mode
       )
+      # Labels and plots describe the inputs of THIS run, not the live controls (E9).
+      res$param <- input$thr_param; res$strategy <- input$thr_strategy
+      res$ref <- det_result()$ref; res$mode <- input$thr_mode; res$wtp <- det_result()$wtp
+      res
     })
 
     output$threshold_text <- shiny::renderPrint({
       shiny::req(threshold_result())
       res <- threshold_result()
-      cat("Parameter:", input$thr_param, "\n")
-      cat("Reference:", det_result()$ref, "| Target:", input$thr_strategy, "\n")
+      cat("Parameter:", res$param, "\n")
+      cat("Reference:", res$ref, "| Target:", res$strategy, "\n")
       if (is.finite(res$threshold)) {
         cat("Estimated threshold:", round(res$threshold, 4), "\n")
       } else {
@@ -434,20 +530,18 @@ cea_app_server <- function(models) {
     output$threshold_plot <- shiny::renderPlot({
       shiny::req(threshold_result())
       res <- threshold_result()
-      print(plot_threshold(res$grid, res$threshold, input$thr_param,
-                           input$wtp, mode = input$thr_mode,
+      print(plot_threshold(res$grid, res$threshold, res$param,
+                           res$wtp, mode = res$mode,
                            palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$download_threshold_csv <- shiny::downloadHandler(
-      filename = function() paste0("threshold_", input$thr_param, ".csv"),
+      filename = function() paste0("threshold_", threshold_result()$param, ".csv"),
       content = function(file) utils::write.csv(threshold_result()$grid, file, row.names = FALSE)
     )
 
     # --- PSA ---
-    psa_state <- shiny::reactiveValues(draws = NULL)
-
-    psa_results <- shiny::eventReactive(input$run_psa, {
+    shiny::observeEvent(input$run_psa, {
       N <- as.integer(input$psa_n)
       if (!is.finite(N) || N < 10) N <- 100
       N <- max(10, min(N, 10000))
@@ -463,7 +557,7 @@ cea_app_server <- function(models) {
         }
       )
 
-      if (is.null(res)) return(NULL)
+      if (is.null(res)) return()
 
       if (res$dropped > 0) {
         shiny::showNotification(
@@ -473,18 +567,24 @@ cea_app_server <- function(models) {
       }
 
       psa_state$draws <- res$draws
-      res$results
+      psa_state$dropped <- res$dropped
+      psa_rv(res$results)
+      stale(FALSE)
     })
 
     output$ref_text_psa <- shiny::renderUI({
       shiny::req(det_result())
-      mode_label <- if (identical(input$ref_mode, "auto")) "(auto)" else "(pinned)"
-      shiny::HTML(paste0("<h4>PSA Reference: <span style='color:#4b2e83;'>",
-                         det_result()$ref, "</span> ", mode_label, "</h4>"))
+      mode_label <- if (identical(det_result()$ref_mode, "auto")) "(auto)" else "(pinned)"
+      shiny::tagList(
+        stale_banner(),
+        shiny::HTML(paste0("<h4>PSA Reference: <span class='cea-ref'>",
+                           det_result()$ref, "</span> ", mode_label, "</h4>")))
     })
 
     ce_plane_obj <- shiny::reactive({
-      shiny::req(psa_results(), det_result())
+      shiny::validate(
+        shiny::need(!is.null(det_result()), "Run the deterministic analysis first: it sets the strategies and the reference."),
+        shiny::need(!is.null(psa_results()), "Run the PSA."))
       df <- psa_results()
       ref <- det_result()$ref
       inc_list <- lapply(setdiff(det_result()$strategies, ref), function(s) {
@@ -502,7 +602,7 @@ cea_app_server <- function(models) {
     output$ce_plane <- shiny::renderPlot({
       shiny::req(ce_plane_obj())
       print(ce_plane_obj())
-    })
+    }, bg = "transparent")
 
     output$download_ce_plane_png <- shiny::downloadHandler(
       filename = function() "ce_plane.png",
@@ -512,7 +612,9 @@ cea_app_server <- function(models) {
     )
 
     output$psa_summary_ci <- DT::renderDT({
-      shiny::req(psa_results(), det_result())
+      shiny::validate(
+        shiny::need(!is.null(det_result()), "Run the deterministic analysis first: it sets the strategies and the reference."),
+        shiny::need(!is.null(psa_results()), "Run the PSA."))
       df <- psa_results()
       strategies <- det_result()$strategies
       wtp <- input$wtp
@@ -576,10 +678,10 @@ cea_app_server <- function(models) {
                             ncol = min(length(sel), 3)) +
         ggplot2::labs(x = "Draw value", y = "Frequency",
                       title = "PSA parameter draws") +
-        ggplot2::theme_minimal(base_size = 12)
+        theme_cea()
     })
 
-    output$psa_param_plot <- shiny::renderPlot({ print(psa_param_plot_obj()) })
+    output$psa_param_plot <- shiny::renderPlot({ print(psa_param_plot_obj()) }, bg = "transparent")
 
     output$psa_param_summary <- DT::renderDT({
       dr <- psa_state$draws
@@ -614,7 +716,9 @@ cea_app_server <- function(models) {
 
     # --- CEAC ---
     ceac_data <- shiny::reactive({
-      shiny::req(psa_results(), det_result())
+      shiny::validate(
+        shiny::need(!is.null(det_result()), "Run the deterministic analysis first: it sets the strategies and the reference."),
+        shiny::need(!is.null(psa_results()), "Run the PSA."))
       compute_ceac(psa_results(), det_result()$strategies,
                    wtp_max = max(input$wtp, 200000))
     })
@@ -622,7 +726,7 @@ cea_app_server <- function(models) {
     output$ceac_plot <- shiny::renderPlot({
       shiny::req(ceac_data())
       print(plot_ceac(ceac_data(), palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$download_ceac_png <- shiny::downloadHandler(
       filename = function() "ceac.png",
@@ -719,7 +823,7 @@ cea_app_server <- function(models) {
     output$survival_plot <- shiny::renderPlot({
       shiny::req(survival_plot_obj())
       print(survival_plot_obj())
-    })
+    }, bg = "transparent")
 
     output$download_survival_png <- shiny::downloadHandler(
       filename = function() paste0("survival_", .nc(input$surv_curve, "OS"), ".png"),
@@ -825,7 +929,7 @@ cea_app_server <- function(models) {
     output$trace_plot <- shiny::renderPlot({
       shiny::req(trace_plot_obj())
       print(trace_plot_obj())
-    })
+    }, bg = "transparent")
 
     output$download_trace_png <- shiny::downloadHandler(
       filename = function() "traces.png",
@@ -836,7 +940,9 @@ cea_app_server <- function(models) {
 
     # --- VOI ---
     evpi_data <- shiny::reactive({
-      shiny::req(psa_results(), det_result())
+      shiny::validate(
+        shiny::need(!is.null(det_result()), "Run the deterministic analysis first: it sets the strategies and the reference."),
+        shiny::need(!is.null(psa_results()), "Run the PSA."))
       compute_evpi(psa_results(), det_result()$strategies,
                    wtp_max = max(input$wtp, 200000))
     })
@@ -844,7 +950,7 @@ cea_app_server <- function(models) {
     output$evpi_plot <- shiny::renderPlot({
       shiny::req(evpi_data())
       print(plot_evpi(evpi_data(), palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$download_evpi_csv <- shiny::downloadHandler(
       filename = function() "evpi.csv",
@@ -852,7 +958,9 @@ cea_app_server <- function(models) {
     )
 
     evppi_data <- shiny::reactive({
-      shiny::req(psa_results(), det_result())
+      shiny::validate(
+        shiny::need(!is.null(det_result()), "Run the deterministic analysis first: it sets the strategies and the reference."),
+        shiny::need(!is.null(psa_results()), "Run the PSA."))
       draws <- psa_state$draws
       shiny::req(!is.null(draws), ncol(draws) > 0)
       shiny::withProgress(message = "Computing EVPPI...", value = 0.5, {
@@ -863,7 +971,7 @@ cea_app_server <- function(models) {
     output$evppi_plot <- shiny::renderPlot({
       shiny::req(evppi_data())
       print(plot_evppi(evppi_data(), palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$evppi_table <- DT::renderDT({
       shiny::req(evppi_data())
@@ -879,7 +987,9 @@ cea_app_server <- function(models) {
 
     # --- Expected Loss ---
     el_data <- shiny::reactive({
-      shiny::req(psa_results(), det_result())
+      shiny::validate(
+        shiny::need(!is.null(det_result()), "Run the deterministic analysis first: it sets the strategies and the reference."),
+        shiny::need(!is.null(psa_results()), "Run the PSA."))
       compute_expected_loss(psa_results(), det_result()$strategies,
                             wtp_max = max(input$wtp, 200000))
     })
@@ -887,7 +997,7 @@ cea_app_server <- function(models) {
     output$expected_loss_plot <- shiny::renderPlot({
       shiny::req(el_data())
       print(plot_expected_loss(el_data(), palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$download_el_csv <- shiny::downloadHandler(
       filename = function() "expected_loss.csv",
@@ -995,7 +1105,7 @@ cea_app_server <- function(models) {
     output$forest_plot <- shiny::renderPlot({
       shiny::req(forest_plot_obj())
       print(forest_plot_obj())
-    })
+    }, bg = "transparent")
 
     output$download_forest_png <- shiny::downloadHandler(
       filename = function() "scenario_forest.png",
@@ -1108,13 +1218,13 @@ cea_app_server <- function(models) {
       shiny::req(wc_result())
       print(plot_weighted_comparison(wc_result()$details, metric = "Cost",
                                      palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$wc_qaly_plot <- shiny::renderPlot({
       shiny::req(wc_result())
       print(plot_weighted_comparison(wc_result()$details, metric = "QALY",
                                      palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$wc_forest_plot <- shiny::renderPlot({
       shiny::req(wc_result())
@@ -1122,7 +1232,7 @@ cea_app_server <- function(models) {
       if (nrow(pw) == 0) return(NULL)
       print(plot_weighted_pairwise(pw, metric = input$wc_forest_metric,
                                    wtp = input$wtp, palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     # --- BIA ---
     output$bia_current_mix_ui <- shiny::renderUI({
@@ -1184,12 +1294,12 @@ cea_app_server <- function(models) {
     output$bia_cost_plot <- shiny::renderPlot({
       shiny::req(bia_result())
       print(plot_bia(bia_result()$impact, palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$bia_waterfall_plot <- shiny::renderPlot({
       shiny::req(bia_result())
       print(plot_bia_waterfall(bia_result()$impact, palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$bia_total_text <- shiny::renderUI({
       shiny::req(bia_result())
@@ -1197,7 +1307,7 @@ cea_app_server <- function(models) {
       fmt <- formatC(abs(round(total)), format = "f", big.mark = ",", digits = 0)
       label <- if (total >= 0) paste0("$", fmt, " additional cost") else paste0("$", fmt, " savings")
       shiny::h5(paste0("Total ", input$bia_years, "-year budget impact: "),
-                shiny::span(label, style = paste0("color:", if (total >= 0) "#E74C3C" else "#27AE60", ";")))
+                shiny::span(label, class = if (total >= 0) "cea-fail" else "cea-pass"))
     })
 
     output$bia_impact_table <- DT::renderDT({
@@ -1305,7 +1415,7 @@ cea_app_server <- function(models) {
     output$sg_forest_plot <- shiny::renderPlot({
       shiny::req(sg_forest_obj())
       print(sg_forest_obj())
-    })
+    }, bg = "transparent")
 
     output$download_sg_forest_png <- shiny::downloadHandler(
       filename = function() "subgroup_forest.png",
@@ -1323,10 +1433,10 @@ cea_app_server <- function(models) {
       if (!is.null(mod$subgroups) && length(mod$subgroups) >= 2) {
         shiny::p(paste0("Using ", length(mod$subgroups),
                         " predefined subgroups from model definition."),
-                 style = "color: #27AE60; font-size: 0.85rem;")
+                 class = "cea-pass")
       } else {
         shiny::p("Define subgroups in the model (via new_cea_model(subgroups=...)) for equity analysis.",
-                 style = "color: #E74C3C; font-size: 0.85rem;")
+                 class = "cea-fail")
       }
     })
 
@@ -1357,7 +1467,7 @@ cea_app_server <- function(models) {
       shiny::req(equity_result())
       print(plot_nmb_by_subgroup(equity_result(), "NMB",
                                   palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$equity_lorenz_strategy_ui <- shiny::renderUI({
       shiny::req(equity_result())
@@ -1370,7 +1480,7 @@ cea_app_server <- function(models) {
       print(plot_health_distribution(equity_result(),
                                       strategy = input$equity_lorenz_strat,
                                       palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     output$equity_ci_table <- DT::renderDT({
       shiny::req(equity_result())
@@ -1397,7 +1507,7 @@ cea_app_server <- function(models) {
     output$equity_frontier_plot <- shiny::renderPlot({
       shiny::req(equity_result())
       print(equity_frontier(equity_result(), palette = current_palette()))
-    })
+    }, bg = "transparent")
 
     # --- Validation ---
     val_result <- shiny::eventReactive(input$val_run, {
@@ -1407,7 +1517,7 @@ cea_app_server <- function(models) {
     output$val_score_ui <- shiny::renderUI({
       shiny::req(val_result())
       score <- val_result()$score
-      color <- if (score >= 90) "#27AE60" else if (score >= 80) "#F39C12" else "#E74C3C"
+      color <- if (score >= 90) "#2e7d32" else if (score >= 80) "#c0652d" else "#c62828"  # design tokens
       summ <- val_result()$summary
       shiny::tagList(
         shiny::h3(paste0("Score: ", score, "/100"),
@@ -1426,7 +1536,7 @@ cea_app_server <- function(models) {
     output$val_table <- DT::renderDT({
       shiny::req(val_result())
       df <- val_result()$details
-      status_colors <- c(PASS = "#1b9e77", WARN = "#d95f02", FAIL = "#d73027")
+      status_colors <- c(PASS = "#2e7d32", WARN = "#c0652d", FAIL = "#c62828")  # design tokens
       DT::datatable(df, options = list(pageLength = 20, scrollX = TRUE),
                     rownames = FALSE) |>
         DT::formatStyle("status",
@@ -1457,6 +1567,11 @@ cea_app_server <- function(models) {
         if (!is.null(cd) && nrow(cd) > 0) plot_ceac(cd, palette = current_palette()) else NULL
       })
       plots$frontier <- safe_get(ce_frontier_obj())
+      plots$threshold <- safe_get({                  # (E10: was never collected)
+        res <- threshold_result()
+        if (is.null(res)) NULL else plot_threshold(res$grid, res$threshold, res$param, res$wtp,
+                                                   mode = res$mode, palette = current_palette())
+      })
       plots$survival <- safe_get(survival_plot_obj())
       plots$traces <- safe_get(trace_plot_obj())
       plots
@@ -1476,7 +1591,7 @@ cea_app_server <- function(models) {
         shiny::req(det_result())
         shiny::withProgress(message = "Building Word report...", value = 0.2, {
           psa_res <- tryCatch(
-            list(results = psa_results(), dropped = 0L),
+            list(results = psa_results(), dropped = psa_state$dropped),
             error = function(e) NULL
           )
           shiny::incProgress(0.3)
@@ -1501,7 +1616,7 @@ cea_app_server <- function(models) {
         shiny::req(det_result())
         shiny::withProgress(message = "Building PDF report...", value = 0.2, {
           psa_res <- tryCatch(
-            list(results = psa_results(), dropped = 0L),
+            list(results = psa_results(), dropped = psa_state$dropped),
             error = function(e) NULL
           )
           shiny::incProgress(0.3)

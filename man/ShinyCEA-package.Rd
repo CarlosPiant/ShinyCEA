@@ -19,5 +19,10 @@ Useful links:
 \author{
 \strong{Maintainer}: Carlos Pineda-Antunez \email{carlospinedant@gmail.com}
 
+Authors:
+\itemize{
+  \item Carlos Pineda-Antunez \email{carlospinedant@gmail.com}
+}
+
 }
 \keyword{internal}

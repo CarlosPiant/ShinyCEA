@@ -67,9 +67,11 @@ check_half_cycle <- function(model, params_df) {
           # Without HCC: ratio ~ 2.0 (linear in cycles for constant utility)
           # With HCC: ratio ~ 2.0 but slightly different due to edge effects
           # This is a heuristic — exact detection requires model internals
-          add("HCC heuristic", "PASS",
+          # The ratio alone cannot tell whether a half-cycle correction is
+          # applied, so this is information, not a pass (review finding D12).
+          add("HCC heuristic", "WARN",
               paste0("QALY ratio (full/half horizon): ", round(ratio, 4),
-                     ". Manual verification recommended."))
+                     ". The check cannot see the model internals; verify manually."))
         }
       }
     }

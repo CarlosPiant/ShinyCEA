@@ -14,7 +14,8 @@ An R package with an interactive Shiny application for **cost-effectiveness anal
 - **Probabilistic sensitivity analysis** — CE plane, CEAC, parameter draw distributions
 - **Threshold analysis** — ICER = WTP and INB = 0 crossing detection
 - **Survival and trace plots** — automatic derivation from model outputs
-- **Configurable color palettes** — 3 presets (UW, Classic, Lancet) or fully custom colors
+- **Configurable color palettes** — 4 presets (ShinyModels cream, UW, Classic, Lancet) or fully custom colors
+- **Shared design with ShinyModels** — the app uses the same cream / navy / teal look as the [ShinyModels](https://github.com/CarlosPiant/ShinyModels) editor, whose "Analyze in ShinyCEA" button opens it in a new tab
 - **Report generation** — Word and PDF reports with all tables and figures
 - **CSV import/export** — upload parameters, download all results
 

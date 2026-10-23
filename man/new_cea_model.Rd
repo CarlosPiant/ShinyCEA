@@ -16,7 +16,9 @@ new_cea_model(
 )
 }
 \arguments{
-\item{info}{A function returning list(key, name, strategies).}
+\item{info}{A function returning list(key, name, strategies) and,
+optionally, \code{horizon} (model time horizon in years, used by \code{\link[=run_bia]{run_bia()}}
+to turn the lifetime cost per patient into an annual cost).}
 
 \item{params}{A function returning a tibble of default parameters.}
 

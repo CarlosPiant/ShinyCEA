@@ -9,7 +9,7 @@
 #' @export
 plot_tornado <- function(tor_df, base_val, metric_label, title = NULL, palette = NULL) {
   if (is.null(tor_df) || !nrow(tor_df) || !is.finite(base_val)) return(NULL)
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   order_df <- stats::aggregate(
     abs(tor_df$value - tor_df$base),
@@ -47,7 +47,7 @@ plot_tornado <- function(tor_df, base_val, metric_label, title = NULL, palette =
       x = metric_label, y = NULL,
       title = if (!is.null(title)) title else "Tornado diagram"
     ) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(
       legend.position = "bottom",
       panel.grid.major.y = ggplot2::element_blank(),
@@ -64,7 +64,7 @@ plot_tornado <- function(tor_df, base_val, metric_label, title = NULL, palette =
 #' @return A ggplot object.
 #' @export
 plot_ce_plane <- function(inc_df, wtp, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   inc_df <- inc_df[is.finite(inc_df$inc_qaly) & is.finite(inc_df$inc_cost), ]
 
   ggplot2::ggplot(inc_df, ggplot2::aes(x = .data$inc_qaly, y = .data$inc_cost,
@@ -75,7 +75,7 @@ plot_ce_plane <- function(inc_df, wtp, palette = NULL) {
     ggplot2::geom_abline(slope = wtp, intercept = 0, linetype = "dotted", color = "#555555") +
     scale_color_cea(palette) +
     ggplot2::labs(x = "\u0394 QALYs", y = "\u0394 Costs", color = "Strategy") +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom")
 }
 
@@ -86,7 +86,7 @@ plot_ce_plane <- function(inc_df, wtp, palette = NULL) {
 #' @return A ggplot object.
 #' @export
 plot_ceac <- function(ceac_long, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   ggplot2::ggplot(ceac_long, ggplot2::aes(x = .data$WTP, y = .data$ProbCE,
                                            color = .data$Strategy)) +
@@ -94,7 +94,7 @@ plot_ceac <- function(ceac_long, palette = NULL) {
     scale_color_cea(palette) +
     ggplot2::labs(x = "Willingness-to-pay", y = "Probability cost-effective",
                   color = "Strategy") +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom")
 }
 
@@ -106,7 +106,7 @@ plot_ceac <- function(ceac_long, palette = NULL) {
 #' @return A ggplot object.
 #' @export
 plot_frontier <- function(classified_df, title = "Cost-Effectiveness Frontier", palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   stopifnot(all(c("Strategy", "Cost", "QALY", "Status") %in% names(classified_df)))
 
   fr <- classified_df[classified_df$Status == "Frontier", ]
@@ -145,7 +145,7 @@ plot_frontier <- function(classified_df, title = "Cost-Effectiveness Frontier", 
       "Frontier" = 16, "Dominated" = 17, "Extendedly dominated" = 15
     )) +
     ggplot2::labs(x = "QALYs", y = "Costs", title = title, color = NULL, shape = NULL) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom")
 }
 
@@ -161,7 +161,7 @@ plot_frontier <- function(classified_df, title = "Cost-Effectiveness Frontier", 
 #' @export
 plot_threshold <- function(grid_df, threshold, param_name, wtp,
                            mode = c("icer", "inb"), palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   mode <- match.arg(mode)
 
   if (mode == "icer") {
@@ -186,7 +186,7 @@ plot_threshold <- function(grid_df, threshold, param_name, wtp,
     ggplot2::geom_line(linewidth = 1, color = palette$primary) +
     ggplot2::geom_hline(yintercept = hline, linetype = "dashed", color = "#555555") +
     ggplot2::labs(x = param_name, y = y_label, title = plot_title) +
-    ggplot2::theme_minimal(base_size = 12)
+    theme_cea()
 
   if (is.finite(threshold)) {
     p <- p +
@@ -209,7 +209,7 @@ plot_threshold <- function(grid_df, threshold, param_name, wtp,
 #' @export
 plot_survival <- function(surv_df, curve_name = "OS", envelope_df = NULL,
                           facet = FALSE, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   df <- surv_df[surv_df$curve == curve_name, ]
   df$surv <- pmin(pmax(df$surv, 0), 1)
 
@@ -219,7 +219,7 @@ plot_survival <- function(surv_df, curve_name = "OS", envelope_df = NULL,
     scale_color_cea(palette) +
     ggplot2::labs(x = "Time", y = paste0(curve_name, " survival S(t)"),
                   color = "Strategy") +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom")
 
   if (!is.null(envelope_df)) {
@@ -254,7 +254,7 @@ plot_survival <- function(surv_df, curve_name = "OS", envelope_df = NULL,
 #' @return A ggplot object.
 #' @export
 plot_trace <- function(trace_df, state_filter = NULL, facet = TRUE, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   if (!is.null(state_filter)) {
     df <- trace_df[trace_df$state == state_filter, ]
@@ -264,7 +264,7 @@ plot_trace <- function(trace_df, state_filter = NULL, facet = TRUE, palette = NU
       scale_color_cea(palette) +
       ggplot2::labs(x = "Time", y = paste0("P(", state_filter, ")"),
                     color = "Strategy") +
-      ggplot2::theme_minimal(base_size = 12) +
+      theme_cea() +
       ggplot2::theme(legend.position = "bottom")
   } else {
     p <- ggplot2::ggplot(trace_df, ggplot2::aes(x = .data$time, y = .data$prob,
@@ -272,7 +272,7 @@ plot_trace <- function(trace_df, state_filter = NULL, facet = TRUE, palette = NU
       ggplot2::geom_line(linewidth = 1) +
       scale_color_cea(palette) +
       ggplot2::labs(x = "Time", y = "State occupancy", color = "State") +
-      ggplot2::theme_minimal(base_size = 12) +
+      theme_cea() +
       ggplot2::theme(legend.position = "bottom")
     if (facet) p <- p + ggplot2::facet_wrap(~ strategy, scales = "free_y")
   }

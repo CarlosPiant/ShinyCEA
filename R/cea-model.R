@@ -1,6 +1,8 @@
 #' Create a CEA Model
 #'
-#' @param info A function returning list(key, name, strategies).
+#' @param info A function returning list(key, name, strategies) and,
+#'   optionally, `horizon` (model time horizon in years, used by [run_bia()]
+#'   to turn the lifetime cost per patient into an annual cost).
 #' @param params A function returning a tibble of default parameters.
 #' @param simulate A function(pars, strategy) returning list(cost, qaly, trace?, survival?).
 #' @param diagram Optional path to a diagram image file (PNG/SVG).
@@ -76,24 +78,35 @@ validate_cea_model <- function(model) {
     stop("default_params() is missing columns: ", paste(missing_cols, collapse = ", "), call. = FALSE)
   }
 
-  pars <- stats::setNames(as.list(df$base), df$name)
-  strat1 <- info$strategies[1]
-  res <- tryCatch(
-    withCallingHandlers(
-      model$simulate(pars, strat1),
-      warning = function(w) invokeRestart("muffleWarning"),
-      message = function(m) invokeRestart("muffleMessage")
-    ),
-    error = function(e) {
-    stop("model$simulate() failed for strategy '", strat1, "': ",
-         conditionMessage(e), call. = FALSE)
-  })
-
-  if (!is.list(res) || !all(c("cost", "qaly") %in% names(res))) {
-    stop("model$simulate() must return a list with at least 'cost' and 'qaly'.", call. = FALSE)
+  bad_base <- !is.finite(suppressWarnings(as.numeric(df$base)))
+  if (any(bad_base)) {
+    stop("default_params() has non-finite base values for: ",
+         paste(df$name[bad_base], collapse = ", "), call. = FALSE)
   }
-  if (!is.finite(as.numeric(res$cost)) || !is.finite(as.numeric(res$qaly))) {
-    stop("model$simulate() returned non-finite cost or qaly for strategy '", strat1, "'.", call. = FALSE)
+  pars <- stats::setNames(as.list(df$base), df$name)
+  # Every strategy is simulated once (review finding E14: a model failing for
+  # the second strategy used to be accepted and fail later in the app).
+  for (strat in info$strategies) {
+    res <- tryCatch(
+      withCallingHandlers(
+        model$simulate(pars, strat),
+        warning = function(w) invokeRestart("muffleWarning"),
+        message = function(m) invokeRestart("muffleMessage")
+      ),
+      error = function(e) {
+        stop("model$simulate() failed for strategy '", strat, "': ",
+             conditionMessage(e), call. = FALSE)
+      })
+    if (!is.list(res) || !all(c("cost", "qaly") %in% names(res))) {
+      stop("model$simulate() must return a list with at least 'cost' and 'qaly'.", call. = FALSE)
+    }
+    if (length(res$cost) != 1L || length(res$qaly) != 1L) {
+      stop("model$simulate() must return a single cost and a single qaly for strategy '",
+           strat, "' (got lengths ", length(res$cost), " and ", length(res$qaly), ").", call. = FALSE)
+    }
+    if (!is.finite(as.numeric(res$cost)) || !is.finite(as.numeric(res$qaly))) {
+      stop("model$simulate() returned non-finite cost or qaly for strategy '", strat, "'.", call. = FALSE)
+    }
   }
 
   invisible(TRUE)

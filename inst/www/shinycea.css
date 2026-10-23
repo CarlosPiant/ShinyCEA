@@ -1,0 +1,90 @@
+/* =============================================================================
+   shinycea.css - styles for the ShinyCEA app.
+   Design tokens and the base block (":root" to ".shiny-notification") MIRROR
+   inst/www/editor.css of the ShinyModels package (cream paper, navy condensed
+   uppercase headings, teal accent, JetBrains Mono code) so that a model built
+   in ShinyModels opens here in the same design. Edit both files together.
+   Functional colours: error red, success green, warning orange.
+   ========================================================================== */
+:root {
+  --bg: #f6eddd; --bg-deep: #efe3d1; --card: #f9f2e5; --card-soft: #faf4e9f7;
+  --code-bg: #f8f0e3; --line: #cec0ad; --line-soft: #e2d7c7;
+  --navy: #18213d; --navy-2: #24304a; --ink: #4f535b; --muted: #696d74; --faint: #ada293;
+  --teal: #1aa3a1; --teal-deep: #3f7f8e; --kw: #2a56a3; --fn: #c0652d;
+  --red: #c62828; --green: #2e7d32;
+  --sans: "Barlow", system-ui, -apple-system, sans-serif;
+  --cond: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); }
+h1, h2, h3, h4, h5, h6 { font-family: var(--cond); color: var(--navy); text-transform: uppercase;
+  letter-spacing: 0.04em; font-weight: 700; }
+code, pre, .ceab-mono { font-family: var(--mono); }
+code { color: var(--kw); background: rgba(42, 86, 163, 0.07); padding: 1px 4px; border-radius: 4px; font-size: 0.86em; }
+.btn { font-family: var(--sans); border-radius: 9px; border: 1.5px solid #d6c7b3; background: rgba(240,230,215,.7);
+  color: var(--ink); }
+.btn:hover { background: var(--card); border-color: var(--line); color: var(--navy); }
+.btn-primary, .btn-primary:hover { background: var(--navy); border-color: var(--navy); color: #fff; }
+.btn-warning, .btn-warning:hover { background: var(--teal); border-color: var(--teal); color: #fff; }
+.btn-outline-primary { color: var(--navy); border-color: var(--navy); background: transparent; }
+.btn-outline-primary:hover { background: var(--navy); color: #fff; }
+.btn-outline-danger { color: var(--red); border-color: var(--red); background: transparent; }
+.btn-outline-danger:hover { background: var(--red); color: #fff; }
+.btn-outline-secondary { color: var(--ink); border-color: var(--line); }
+.form-control, .form-select, .selectize-input { background: var(--card); border: 1.5px solid var(--line);
+  border-radius: 9px; color: var(--navy); font-family: var(--sans); }
+.form-control:focus, .form-select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(26,163,161,.2); }
+.nav-tabs { border-bottom: 1.5px solid var(--line); }
+.nav-tabs .nav-link { font-family: var(--cond); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+  color: var(--muted); border: none; border-bottom: 3px solid transparent; }
+.nav-tabs .nav-link.active { color: var(--navy); background: transparent; border-bottom-color: var(--navy); }
+.nav-tabs .nav-link:hover { color: var(--navy); border-color: transparent; border-bottom-color: var(--line); }
+table.dataTable, .table { color: var(--ink); }
+table.dataTable thead th { font-family: var(--cond); text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--navy); border-bottom: 1.5px solid var(--line) !important; }
+table.dataTable tbody tr.selected > td { background: rgba(26,163,161,.15) !important; }
+.modal-content { background: var(--card); border: 1.5px solid var(--line); border-radius: 11px; }
+.shiny-notification { background: var(--card); border: 1.5px solid var(--line); color: var(--navy); }
+
+
+/* ---- Top bar (same look as the ShinyModels toolbar) ------------------------- */
+.cea-topbar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 10px 16px;
+  margin: 0 -12px 14px -12px; background: var(--bg-deep); color: var(--navy);
+  border-bottom: 1.5px solid var(--line); }
+.cea-topbar .cea-title { font-family: var(--cond); text-transform: uppercase; letter-spacing: 0.12em;
+  font-weight: 700; font-size: 1.1rem; }
+.cea-topbar .cea-subtitle { font-family: var(--cond); text-transform: uppercase; letter-spacing: 0.06em;
+  font-size: 0.8rem; color: var(--muted); }
+.cea-topbar .cea-model { margin-left: auto; font-size: 0.9rem; color: var(--ink); }
+.cea-topbar .cea-model b { color: var(--navy); font-weight: 600; }
+
+/* ---- Sidebar as a cream card ------------------------------------------------- */
+.cea-sidebar.well, .cea-sidebar { background: var(--card); border: 1.5px solid var(--line);
+  border-radius: 11px; box-shadow: none; padding: 14px 16px; }
+.cea-sidebar hr { border-color: var(--line); opacity: 1; }
+.sidebar-section { margin-bottom: 14px; }
+.sidebar-section h6 { font-family: var(--cond); text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: 0.72rem; color: var(--muted); margin-bottom: 8px; font-weight: 700; }
+.cea-sidebar label { color: var(--ink); font-size: 0.85rem; }
+.cea-sidebar .btn-success, .cea-sidebar .btn-success:hover { background: var(--teal); border-color: var(--teal);
+  color: #fff; }
+
+/* ---- Content ------------------------------------------------------------------ */
+h4 { font-size: 1.05rem; margin-top: 18px; }
+h5 { font-size: 0.95rem; }
+.cea-hint { color: var(--muted); font-size: 0.9rem; }
+.cea-ref { color: var(--teal-deep); }
+.cea-stale { background: rgba(192, 101, 45, 0.12); border: 1.5px solid var(--fn); color: var(--navy);
+  border-radius: 9px; padding: 8px 12px; margin: 6px 0 10px 0; font-size: 0.9rem; }
+.cea-pass { color: var(--green); font-size: 0.85rem; }
+.cea-fail { color: var(--red); font-size: 0.85rem; }
+.shiny-download-link { display: inline-block; margin: 4px 0; font-size: 0.85rem; }
+.palette-preview { display: inline-flex; gap: 3px; margin-top: 4px; }
+.palette-swatch { width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--line); }
+.badge.bg-success { background: var(--green) !important; }
+.badge.bg-warning { background: var(--fn) !important; color: #fff; }
+.badge.bg-danger { background: var(--red) !important; }
+.shiny-plot-output img { background: transparent; }
+.dataTables_wrapper .dataTables_filter input, .dataTables_wrapper .dataTables_length select {
+  background: var(--card); border: 1.5px solid var(--line); border-radius: 7px; }
+.form-check-input:checked { background-color: var(--navy); border-color: var(--navy); }

@@ -119,11 +119,53 @@ test_that("sample_param_row clamps probabilities to [0,1]", {
   expect_true(all(vals >= 0 & vals <= 1))
 })
 
-test_that("sample_param_row clamps costs to >= 0", {
+test_that("sample_param_row does not clamp by parameter name (review A3)", {
   set.seed(42)
-  row <- cea_param("c_drug", 100, 50, 200, distribution = "normal")
-  vals <- replicate(100, sample_param_row(row))
-  expect_true(all(vals >= 0))
+  # A disutility named like a utility and a negative log hazard ratio named
+  # with "drug" keep their sign and centre.
+  dis <- cea_param("u_decrement", -0.10, -0.15, -0.05, distribution = "normal")
+  vals <- replicate(500, sample_param_row(dis))
+  expect_true(all(vals < 0))
+  expect_equal(mean(vals), -0.10, tolerance = 0.02)
+  lhr <- cea_param("log_hr_drug", -0.3, -0.5, -0.1, distribution = "normal")
+  vals <- replicate(500, sample_param_row(lhr))
+  expect_equal(mean(vals), -0.3, tolerance = 0.02)
+  # A ratio above 1 named p_ is not forced into [0, 1].
+  rr <- cea_param("p_rate_ratio", 1.4, 1.1, 1.8, distribution = "lognormal")
+  vals <- replicate(500, sample_param_row(rr))
+  expect_true(mean(vals > 1) > 0.9)
+})
+
+test_that("equal bounds mean no uncertainty (review A4)", {
+  row <- cea_param("x", 0.3, 0.3, 0.3, distribution = "beta")
+  expect_true(all(replicate(20, sample_param_row(row)) == 0.3))
+  row <- cea_param("y", 100, 100, 100, distribution = "normal", base = 120)
+  expect_true(all(replicate(20, sample_param_row(row)) == 120))
+})
+
+test_that("lognormal draws reproduce the stated point estimate and interval (review A5)", {
+  set.seed(1)
+  row <- cea_param("hr", 0.5, 0.2, 1.25, distribution = "lognormal")
+  vals <- replicate(20000, sample_param_row(row))
+  expect_equal(unname(stats::median(vals)), 0.5, tolerance = 0.03)
+  expect_equal(unname(stats::quantile(vals, c(0.025, 0.975))), c(0.2, 1.25), tolerance = 0.06)
+})
+
+test_that("text numbers and flags are parsed, unreadable ones reported (review D3)", {
+  df <- data.frame(name = c("p_a", "p_b", "c_x", "bad"),
+                   distribution = c("beta", "beta", "gamma", "beta"),
+                   mean = c("0,05", "5%", "1,000.5", "abc"),
+                   lower = c("0,01", "1%", "900", "0"), upper = c("0,1", "9%", "1,100", "1"),
+                   base = c("0,05", "5%", "1,000.5", "0.5"),
+                   include_psa = c("0", "no", "1", "maybe"), include_tornado = c("yes", "n", "TRUE", "F"),
+                   stringsAsFactors = FALSE)
+  res <- sanitize_params(df)
+  expect_equal(res$df$mean[1:3], c(0.05, 0.05, 1000.5))
+  expect_true(is.na(res$df$mean[4]))
+  expect_equal(res$df$include_psa, c(FALSE, FALSE, TRUE, FALSE))
+  expect_equal(res$df$include_tornado, c(TRUE, FALSE, TRUE, FALSE))
+  expect_true(any(grepl("could not read 'abc'", res$notes)))
+  expect_true(any(grepl("maybe", res$notes)))
 })
 
 test_that("sample_param_row handles triangular distribution", {

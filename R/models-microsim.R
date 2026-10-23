@@ -89,6 +89,22 @@ cea_microsim <- function() {
     strategy <- match.arg(strategy, c("standard", "new_treatment"))
     .g <- function(nm, d) { v <- pars[[nm]]; if (is.null(v)) d else as.numeric(v) }
 
+    # Common random numbers: the same seed for every call (and both strategies),
+    # so repeated runs are reproducible and differences between strategies,
+    # tornado bounds, grid points and PSA draws reflect the inputs rather than
+    # Monte Carlo noise (review finding E5). The caller's RNG state is restored.
+    # Override with a `seed` entry in `pars` when a different stream is wanted.
+    seed <- as.integer(.g("seed", 20240101))
+    old_seed <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      get(".Random.seed", envir = globalenv())
+    } else NULL
+    on.exit({
+      if (is.null(old_seed)) {
+        if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) rm(".Random.seed", envir = globalenv())
+      } else assign(".Random.seed", old_seed, envir = globalenv())
+    }, add = TRUE)
+    set.seed(seed)
+
     N <- as.integer(.g("n_patients", 1000))
     n_cycles <- as.integer(.g("n_cycles", 120))
     cl <- .g("cycle_length", 1/12)
@@ -128,8 +144,6 @@ cea_microsim <- function() {
 
     # States: 1=Stable, 2=Progressed, 3=Severe, 4=Dead
     # Generate heterogeneous patients
-    # Use a deterministic seed based on strategy to ensure reproducibility
-    # while allowing different draws per PSA iteration (outer seed varies)
     ages <- mean_age + age_sd * stats::qnorm((seq_len(N) - 0.5) / N)
     ages <- pmax(ages, 18)
 

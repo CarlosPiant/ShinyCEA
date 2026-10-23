@@ -9,7 +9,7 @@ scale_color_cea(palette, ...)
 \arguments{
 \item{palette}{A palette list from \code{\link[=cea_palette]{cea_palette()}} or \code{\link[=cea_palette_custom]{cea_palette_custom()}}.}
 
-\item{...}{Additional arguments passed to \code{\link[ggplot2:scale_manual]{ggplot2::scale_color_manual()}}.}
+\item{...}{Additional arguments passed to \code{\link[ggplot2:scale_color_manual]{ggplot2::scale_color_manual()}}.}
 }
 \value{
 A ggplot2 scale.

@@ -97,6 +97,7 @@ run_distributional_cea <- function(model, base_params, subgroups, wtp = 100000) 
 
   list(
     by_subgroup = by_subgroup,
+    subgroups = subgroups,
     population = population,
     strategies = strategies,
     wtp = wtp
@@ -211,7 +212,7 @@ calculate_equity_weighted_nmb <- function(dcea_result,
 #' @export
 plot_nmb_by_subgroup <- function(dcea_result, metric = c("NMB", "QALY", "Cost"),
                                   palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   metric <- match.arg(metric)
 
   df <- dcea_result$by_subgroup
@@ -234,7 +235,7 @@ plot_nmb_by_subgroup <- function(dcea_result, metric = c("NMB", "QALY", "Cost"),
     ggplot2::labs(x = NULL, y = y_label,
                   title = paste0(metric, " by Subgroup and Strategy"),
                   fill = "Strategy") +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom",
                    axis.text.x = ggplot2::element_text(angle = 25, hjust = 1))
 
@@ -255,7 +256,7 @@ plot_nmb_by_subgroup <- function(dcea_result, metric = c("NMB", "QALY", "Cost"),
 #' @export
 plot_health_distribution <- function(dcea_result, strategy = NULL,
                                      show_equal = TRUE, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   df <- dcea_result$by_subgroup
   if (is.null(strategy)) strategy <- dcea_result$strategies[1]
@@ -301,7 +302,7 @@ plot_health_distribution <- function(dcea_result, strategy = NULL,
       title = paste0("Health Distribution: ", strategy),
       subtitle = "Lorenz curve (area between = inequality)"
     ) +
-    ggplot2::theme_minimal(base_size = 12)
+    theme_cea()
 
   p
 }
@@ -326,7 +327,7 @@ calculate_concentration_index <- function(dcea_result, strategy = NULL,
   if (is.null(strategy)) strategy <- dcea_result$strategies[1]
   df <- df[df$Strategy == strategy, ]
 
-  # Rank by baseline health
+  # Rank by baseline health, or by the value of a subgroup override (D10).
   if (rank_by == "baseline") {
     if (all(is.na(df$Baseline_QALY))) {
       return(list(index = NA_real_,
@@ -334,6 +335,17 @@ calculate_concentration_index <- function(dcea_result, strategy = NULL,
                   by_subgroup = df))
     }
     df <- df[order(df$Baseline_QALY), ]
+  } else {
+    defs <- dcea_result$subgroups
+    key <- vapply(df$Subgroup, function(nm) {
+      v <- defs[[nm]]$overrides[[rank_by]]
+      if (is.null(v)) NA_real_ else as.numeric(v)
+    }, numeric(1))
+    if (all(is.na(key))) {
+      stop("`rank_by` must be \"baseline\" or the name of a parameter overridden in the ",
+           "subgroups; `", rank_by, "` is not overridden in any subgroup.", call. = FALSE)
+    }
+    df <- df[order(key), ]
   }
 
   n_groups <- nrow(df)
@@ -384,7 +396,7 @@ calculate_concentration_index <- function(dcea_result, strategy = NULL,
 #' @export
 equity_frontier <- function(dcea_result, epsilon_values = c(0, 0.5, 1, 2, 5),
                             palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   strategies <- dcea_result$strategies
   wtp <- dcea_result$wtp
@@ -451,7 +463,7 @@ equity_frontier <- function(dcea_result, epsilon_values = c(0, 0.5, 1, 2, 5),
                          "C-index shown as point label"),
       color = "Strategy"
     ) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom")
 
   p

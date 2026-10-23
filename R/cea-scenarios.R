@@ -8,7 +8,11 @@
 #' @param scenarios A named list of scenarios. Each element is a named list
 #'   of parameter overrides (e.g., `list(d_cost = 0, d_qaly = 0)`).
 #' @param wtp WTP threshold.
-#' @param ref_strategy Optional reference strategy.
+#' @param ref_strategy Optional reference strategy. When `NULL`, the
+#'   reference is the max-NMB strategy of the base case (`base_params`) and
+#'   is kept for every scenario, so `ICER_vsRef` always compares against the
+#'   same strategy (review finding D4: a per-scenario reference left the
+#'   strategy of interest without an ICER).
 #' @return A data.frame with columns: Scenario, Strategy, Cost, QALY, NMB,
 #'   ICER_vsRef, Reference.
 #' @export
@@ -26,6 +30,10 @@ run_scenarios <- function(model, base_params, scenarios, wtp = 100000,
                           ref_strategy = NULL) {
   if (!is.list(scenarios) || is.null(names(scenarios))) {
     stop("scenarios must be a named list.", call. = FALSE)
+  }
+  # Fix the comparator once, from the base case, unless the caller pinned one.
+  if (is.null(ref_strategy)) {
+    ref_strategy <- run_deterministic(model, base_params, wtp = wtp)$ref
   }
 
   results <- lapply(names(scenarios), function(sc_name) {
@@ -105,7 +113,7 @@ summarize_scenarios <- function(scenario_results) {
 #' @export
 plot_scenario_forest <- function(scenario_results, target, metric = c("ICER", "NMB"),
                                  wtp = 100000, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   metric <- match.arg(metric)
 
   df <- scenario_results[scenario_results$Strategy == target, ]
@@ -174,7 +182,7 @@ plot_scenario_forest <- function(scenario_results, target, metric = c("ICER", "N
                  "Not cost-effective" = palette$dominated)
     ) +
     ggplot2::labs(x = x_label, y = NULL, title = plot_title) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(
       legend.position = "bottom",
       panel.grid.major.y = ggplot2::element_blank(),

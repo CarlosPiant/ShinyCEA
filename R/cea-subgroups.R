@@ -100,7 +100,7 @@ run_subgroups <- function(model, base_params, subgroups, target, ref,
 #' @export
 plot_subgroup_forest <- function(subgroup_results, metric = c("ICER", "INB"),
                                  wtp = 100000, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
   metric <- match.arg(metric)
 
   df <- subgroup_results
@@ -160,7 +160,7 @@ plot_subgroup_forest <- function(subgroup_results, metric = c("ICER", "INB"),
                  "Not cost-effective" = palette$dominated)
     ) +
     ggplot2::labs(x = x_label, y = NULL, title = plot_title) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(
       legend.position = "bottom",
       panel.grid.major.y = ggplot2::element_blank(),

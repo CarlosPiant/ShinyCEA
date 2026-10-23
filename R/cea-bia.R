@@ -13,6 +13,12 @@
 #'   (must sum to 1), OR a list of such vectors (one per year) for time-varying uptake.
 #' @param years Number of years to project (default 5).
 #' @param annual_growth Annual population growth rate (default 0).
+#' @param horizon_years Length in years of the model's time horizon. The
+#'   model's `simulate()` returns the (discounted) cost per patient over its
+#'   whole horizon; the BIA needs a cost per patient per year, so the lifetime
+#'   cost is divided by this horizon (an average annual cost). Taken from
+#'   `model$info()$horizon` or the `time_horizon` parameter when `NULL`.
+#'   (Review finding D1: the lifetime cost used to be charged every year.)
 #' @return A list with:
 #'   \describe{
 #'     \item{annual}{Data.frame with Year, Strategy, Patients, Cost columns for both scenarios}
@@ -21,9 +27,10 @@
 #'   }
 #' @export
 run_bia <- function(model, params_df, population, current_mix, new_mix,
-                    years = 5L, annual_growth = 0) {
+                    years = 5L, annual_growth = 0, horizon_years = NULL) {
   strategies <- model$info()$strategies
   pars <- stats::setNames(as.list(params_df$base), params_df$name)
+  horizon_years <- .bia_horizon(model, params_df, horizon_years)
 
   # Validate mixes
   .validate_mix <- function(mix, label) {
@@ -58,10 +65,10 @@ run_bia <- function(model, params_df, population, current_mix, new_mix,
     stop("new_mix must be a named numeric vector or a list of them.", call. = FALSE)
   }
 
-  # Per-patient costs by strategy
+  # Per-patient cost per YEAR by strategy: lifetime model cost / horizon.
   per_patient_cost <- vapply(strategies, function(s) {
     res <- safe_simulate(model, pars, s)
-    if (is.null(res)) NA_real_ else res$cost
+    if (is.null(res)) NA_real_ else res$cost / horizon_years
   }, numeric(1))
 
   # Build annual tables
@@ -115,8 +122,26 @@ run_bia <- function(model, params_df, population, current_mix, new_mix,
   list(
     annual = annual,
     impact = impact,
-    total_impact = sum(impact$Budget_Impact)
+    total_impact = sum(impact$Budget_Impact),
+    horizon_years = horizon_years,
+    cost_basis = "Average annual cost per patient: lifetime (discounted) model cost / horizon years"
   )
+}
+
+# Resolve the horizon used to annualise the model's lifetime cost.
+.bia_horizon <- function(model, params_df, horizon_years = NULL) {
+  h <- horizon_years
+  if (is.null(h)) h <- tryCatch(model$info()$horizon, error = function(e) NULL)
+  if (is.null(h) && "time_horizon" %in% params_df$name) {
+    h <- params_df$base[match("time_horizon", params_df$name)]
+  }
+  h <- suppressWarnings(as.numeric(h))
+  if (length(h) != 1L || !is.finite(h) || h <= 0) {
+    stop("Budget impact needs the model's time horizon in years to turn the lifetime ",
+         "cost per patient into an annual cost: pass `horizon_years`, add a `time_horizon` ",
+         "parameter, or set `horizon` in model$info().", call. = FALSE)
+  }
+  h
 }
 
 #' Generate Linear Uptake Mix
@@ -151,7 +176,7 @@ linear_uptake <- function(from, to, years = 5L) {
 #' @return A ggplot object.
 #' @export
 plot_bia <- function(impact_df, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   df_long <- rbind(
     data.frame(Year = impact_df$Year, Scenario = "Current",
@@ -174,7 +199,7 @@ plot_bia <- function(impact_df, palette = NULL) {
     }) +
     ggplot2::labs(x = "Year", y = "Total Cost", fill = "Scenario",
                   title = "Budget Impact Analysis: Current vs. New Scenario") +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom")
 
   p
@@ -187,7 +212,7 @@ plot_bia <- function(impact_df, palette = NULL) {
 #' @return A ggplot object.
 #' @export
 plot_bia_waterfall <- function(impact_df, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   impact_df$color <- ifelse(impact_df$Budget_Impact >= 0,
                             "Additional cost", "Savings")
@@ -210,7 +235,7 @@ plot_bia_waterfall <- function(impact_df, palette = NULL) {
                                            "Savings" = palette$primary)) +
     ggplot2::labs(x = "Year", y = "Budget Impact ($)",
                   title = "Annual Incremental Budget Impact", fill = NULL) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom",
                    panel.grid.major.x = ggplot2::element_blank())
 }

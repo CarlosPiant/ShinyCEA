@@ -54,12 +54,15 @@ test_that("run_deterministic errors on simulation failure", {
   bad <- new_cea_model(
     info = function() list(key = "b", name = "B", strategies = c("A", "B")),
     params = function() cea_param("p", 1, 0, 2),
+    # Fails only away from the defaults, so the model passes validation
+    # (which now simulates every strategy) and the run itself must fail.
     simulate = function(pars, strategy) {
-      if (strategy == "B") stop("fail")
+      if (strategy == "B" && pars$p > 1) stop("fail")
       list(cost = 10, qaly = 1)
     }
   )
-  expect_error(run_deterministic(bad, bad$default_params()), "Simulation failed")
+  pd <- bad$default_params(); pd$base <- 2
+  expect_error(run_deterministic(bad, pd), "Simulation failed")
 })
 
 test_that("run_psa returns correct structure", {

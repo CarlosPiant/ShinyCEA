@@ -26,6 +26,15 @@ cea_discount_weights <- function(n_cycles, rate = 0.03, cycle_length = 1,
   1 / (1 + cycle_rate)^t_start
 }
 
+# Rescale a per-cycle probability calibrated for a cycle of length `from` to
+# a cycle of length `to`, assuming a constant rate within the cycle:
+# p' = 1 - (1 - p)^(to / from). Used by the bundled models when the user
+# overrides `cycle_length` (review finding E13).
+.rescale_prob <- function(p, from, to) {
+  if (!is.finite(from) || !is.finite(to) || from <= 0 || to <= 0) return(p)
+  1 - (1 - pmin(pmax(p, 0), 1))^(to / from)
+}
+
 #' Apply Discounting to Per-Cycle Payoffs
 #'
 #' Multiplies a vector of per-cycle values by discount weights and returns

@@ -4,65 +4,31 @@
 #' @keywords internal
 cea_app_ui <- function(model_choices = NULL) {
   multi_model <- !is.null(model_choices) && length(model_choices) > 1
+  shiny::addResourcePath("shinycea", system.file("www", package = "ShinyCEA"))
 
   shiny::fluidPage(
-    theme = bslib::bs_theme(
-      version = 5, bootswatch = "cosmo",
-      primary = "#2C3E50", secondary = "#95A5A6",
-      success = "#27AE60", info = "#3498DB",
-      warning = "#F39C12", danger = "#E74C3C",
-      bg = "#FAFBFC", fg = "#2C3E50",
-      base_font = bslib::font_google("Inter"),
-      heading_font = bslib::font_google("Inter")
+    # Same bslib theme as the ShinyModels editor (R/editor-ui.R): navy primary,
+    # cream background, Barlow body font. Everything else comes from shinycea.css.
+    theme = bslib::bs_theme(version = 5, primary = "#18213d", bg = "#f6eddd", fg = "#4f535b",
+                            base_font = bslib::font_collection("Barlow", "system-ui", "sans-serif")),
+    title = "ShinyCEA",
+    shiny::tags$head(
+      # Fonts of the shared design; the stylesheet names system fallbacks, so
+      # the app also works without internet access.
+      shiny::tags$link(rel = "preconnect", href = "https://fonts.googleapis.com"),
+      shiny::tags$link(rel = "stylesheet", href = paste0(
+        "https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&",
+        "family=Barlow+Semi+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap")),
+      shiny::tags$link(rel = "stylesheet", href = .cea_asset("shinycea.css"))
     ),
-    shiny::tags$head(shiny::tags$style(shiny::HTML("
-      .nav-tabs .nav-link.active, .nav-tabs .nav-item.show .nav-link {
-        color: #2C3E50 !important;
-        font-weight: 600;
-        border-bottom: 2px solid #2C3E50 !important;
-      }
-      .nav-tabs .nav-link {
-        color: #7F8C8D !important;
-        border: none !important;
-        padding-bottom: 8px;
-      }
-      .nav-tabs .nav-link:hover { color: #2C3E50 !important; }
-      .nav-tabs { border-bottom: 1px solid #DEE2E6; margin-bottom: 20px; }
-      .sidebar { background-color: #F5F6F8; border-right: 1px solid #E8EAED; }
-      .btn-primary { background-color: #2C3E50; border-color: #2C3E50; }
-      .btn-primary:hover { background-color: #1A252F; border-color: #1A252F; }
-      .btn-success { background-color: #27AE60; border-color: #27AE60; }
-      .btn-success:hover { background-color: #1E8449; border-color: #1E8449; }
-      .btn-outline-secondary { color: #5D6D7E; border-color: #BDC3C7; }
-      .btn-outline-secondary:hover { background-color: #ECF0F1; color: #2C3E50; }
-      h4 { color: #2C3E50; font-weight: 600; margin-top: 16px; }
-      .well { background-color: #F5F6F8; border: 1px solid #E8EAED; }
-      .shiny-download-link {
-        display: inline-block; margin: 4px 0;
-        font-size: 0.85rem;
-      }
-      .app-title {
-        font-weight: 700; font-size: 1.3rem; color: #2C3E50;
-        letter-spacing: -0.01em;
-      }
-      .app-subtitle { font-size: 0.8rem; color: #95A5A6; margin-top: 2px; }
-      .sidebar-section { margin-bottom: 14px; }
-      .sidebar-section h6 {
-        font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
-        color: #95A5A6; margin-bottom: 8px; font-weight: 600;
-      }
-      .palette-preview {
-        display: inline-flex; gap: 3px; margin-top: 4px;
-      }
-      .palette-swatch {
-        width: 20px; height: 20px; border-radius: 3px; border: 1px solid #DEE2E6;
-      }
-    "))),
+    # Top bar in the style of the ShinyModels toolbar; the model name is
+    # filled by the server so the user sees which model is being analysed.
     shiny::div(
-      class = "app-title", "ShinyCEA",
-      shiny::div(class = "app-subtitle", "Cost-Effectiveness Analysis Framework")
+      class = "cea-topbar",
+      shiny::span(class = "cea-title", "ShinyCEA"),
+      shiny::span(class = "cea-subtitle", "Cost-effectiveness analysis"),
+      shiny::uiOutput("topbar_model", inline = TRUE, container = shiny::span, class = "cea-model")
     ),
-    shiny::br(),
     shiny::sidebarLayout(
       shiny::sidebarPanel(
         if (multi_model) {
@@ -105,7 +71,7 @@ cea_app_ui <- function(model_choices = NULL) {
                             style = "width: 100%; margin-bottom: 6px;"),
         shiny::actionButton("run_psa", "Run PSA", class = "btn-success btn-sm",
                             style = "width: 100%;"),
-        width = 3
+        width = 3, class = "cea-sidebar"
       ),
       shiny::mainPanel(
         shiny::tabsetPanel(
@@ -159,7 +125,7 @@ cea_app_ui <- function(model_choices = NULL) {
             shiny::hr(),
             shiny::h4("Two-Way Sensitivity Analysis"),
             shiny::p("Vary two parameters simultaneously to see how the decision changes.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::uiOutput("twoway_controls"),
             shiny::plotOutput("twoway_plot", height = "500px"),
             shiny::downloadButton("download_twoway_png", "Download Heatmap (PNG)",
@@ -218,21 +184,21 @@ cea_app_ui <- function(model_choices = NULL) {
           shiny::tabPanel("VOI",
             shiny::h4("Expected Value of Perfect Information (EVPI)"),
             shiny::p("EVPI quantifies the maximum value of eliminating all parameter uncertainty.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::plotOutput("evpi_plot"),
             shiny::downloadButton("download_evpi_csv", "Download EVPI (CSV)",
                                   class = "btn-outline-secondary btn-sm"),
             shiny::br(), shiny::br(),
             shiny::h4("Expected Loss by Strategy"),
             shiny::p("Expected opportunity loss shows the magnitude of choosing the wrong strategy. The optimal strategy minimizes expected loss.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::plotOutput("expected_loss_plot"),
             shiny::downloadButton("download_el_csv", "Download Expected Loss (CSV)",
                                   class = "btn-outline-secondary btn-sm"),
             shiny::br(), shiny::br(),
             shiny::h4("Expected Value of Partial Perfect Information (EVPPI)"),
             shiny::p("EVPPI identifies which parameters drive the most decision uncertainty.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::plotOutput("evppi_plot"),
             shiny::br(),
             DT::DTOutput("evppi_table"),
@@ -254,7 +220,7 @@ cea_app_ui <- function(model_choices = NULL) {
           shiny::tabPanel("Scenarios",
             shiny::h4("Scenario Analysis"),
             shiny::p("Define parameter overrides for each scenario, then run all at once to compare.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::fluidRow(
               shiny::column(4,
                 shiny::textInput("sc_name", "Scenario name", value = ""),
@@ -282,7 +248,7 @@ cea_app_ui <- function(model_choices = NULL) {
             shiny::br(), shiny::br(),
             shiny::h4("Forest plot"),
             shiny::p("Compare a strategy's ICER or NMB across all scenarios.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::fluidRow(
               shiny::column(4, shiny::uiOutput("forest_target_ui")),
               shiny::column(4, shiny::radioButtons("forest_metric", "Metric",
@@ -296,7 +262,7 @@ cea_app_ui <- function(model_choices = NULL) {
           shiny::tabPanel("Weighted",
             shiny::h4("Weighted Comparator Analysis"),
             shiny::p("Combine strategies into weighted composites (e.g., by market share) and compare.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::fluidRow(
               shiny::column(4,
                 shiny::textInput("wc_name", "Composite name", value = ""),
@@ -345,8 +311,10 @@ cea_app_ui <- function(model_choices = NULL) {
           ),
           shiny::tabPanel("BIA",
             shiny::h4("Budget Impact Analysis"),
-            shiny::p("Project total budget impact of adopting a new strategy mix over 3-5 years.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+            shiny::p("Project total budget impact of adopting a new strategy mix over 3-5 years. ",
+                     "Per-patient costs are the model's lifetime cost divided by its time horizon ",
+                     "(average annual cost per patient).",
+                     class = "cea-hint"),
             shiny::fluidRow(
               shiny::column(3,
                 shiny::numericInput("bia_pop", "Target population", value = 100000,
@@ -357,11 +325,11 @@ cea_app_ui <- function(model_choices = NULL) {
                                     min = -5, max = 10, step = 0.5)
               ),
               shiny::column(4,
-                shiny::h6("Current market shares", style = "color: #7F8C8D; font-size: 0.75rem; text-transform: uppercase;"),
+                shiny::h6("Current market shares", class = "cea-hint"),
                 shiny::uiOutput("bia_current_mix_ui")
               ),
               shiny::column(4,
-                shiny::h6("New market shares (final year)", style = "color: #7F8C8D; font-size: 0.75rem; text-transform: uppercase;"),
+                shiny::h6("New market shares (final year)", class = "cea-hint"),
                 shiny::uiOutput("bia_new_mix_ui")
               )
             ),
@@ -387,7 +355,7 @@ cea_app_ui <- function(model_choices = NULL) {
           shiny::tabPanel("Subgroups",
             shiny::h4("Subgroup Analysis"),
             shiny::p("Compare ICERs across patient subgroups defined by parameter overrides.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::fluidRow(
               shiny::column(4,
                 shiny::uiOutput("sg_ref_ui"),
@@ -427,7 +395,7 @@ cea_app_ui <- function(model_choices = NULL) {
           shiny::tabPanel("Equity",
             shiny::h4("Distributional Cost-Effectiveness Analysis"),
             shiny::p("Analyze how costs and benefits distribute across population subgroups.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::uiOutput("equity_ref_ui"),
             shiny::numericInput("equity_epsilon", "Inequality aversion (epsilon)",
                                 value = 1, min = 0, max = 10, step = 0.5),
@@ -449,7 +417,7 @@ cea_app_ui <- function(model_choices = NULL) {
           shiny::tabPanel("Validation",
             shiny::h4("Model Validation Report"),
             shiny::p("Automated checks for transition matrices, probabilities, discounting, PSA inputs, and dominance logic.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::actionButton("val_run", "Run Validation",
                                 class = "btn-primary btn-sm"),
             shiny::br(), shiny::br(),
@@ -463,15 +431,16 @@ cea_app_ui <- function(model_choices = NULL) {
             value = "settings",
             shiny::h4("Figure Color Palette"),
             shiny::p("Choose a preset palette or define custom colors for all generated figures.",
-                     style = "color: #7F8C8D; font-size: 0.9rem;"),
+                     class = "cea-hint"),
             shiny::radioButtons("palette_choice", "Preset palette",
               choices = c(
+                "ShinyModels cream" = "cream",
                 "University of Washington" = "uw",
                 "Classic" = "classic",
                 "Lancet" = "lancet",
                 "Custom" = "custom"
               ),
-              selected = "uw"
+              selected = "cream"
             ),
             shiny::uiOutput("palette_preview"),
             shiny::conditionalPanel(
@@ -479,24 +448,24 @@ cea_app_ui <- function(model_choices = NULL) {
               shiny::hr(),
               shiny::h5("Custom colors"),
               shiny::p("Pick colors for strategies and dominance categories.",
-                       style = "color: #7F8C8D; font-size: 0.85rem;"),
+                       class = "cea-hint"),
               shiny::fluidRow(
-                shiny::column(3, shiny::textInput("custom_color_1", "Strategy 1", value = "#2C3E50")),
-                shiny::column(3, shiny::textInput("custom_color_2", "Strategy 2", value = "#E74C3C")),
-                shiny::column(3, shiny::textInput("custom_color_3", "Strategy 3", value = "#27AE60")),
-                shiny::column(3, shiny::textInput("custom_color_4", "Strategy 4", value = "#3498DB"))
+                shiny::column(3, shiny::textInput("custom_color_1", "Strategy 1", value = "#18213d")),
+                shiny::column(3, shiny::textInput("custom_color_2", "Strategy 2", value = "#1aa3a1")),
+                shiny::column(3, shiny::textInput("custom_color_3", "Strategy 3", value = "#c0652d")),
+                shiny::column(3, shiny::textInput("custom_color_4", "Strategy 4", value = "#2a56a3"))
               ),
               shiny::fluidRow(
-                shiny::column(3, shiny::textInput("custom_color_5", "Strategy 5", value = "#9B59B6")),
-                shiny::column(3, shiny::textInput("custom_color_6", "Strategy 6", value = "#F39C12")),
-                shiny::column(3, shiny::textInput("custom_color_7", "Strategy 7", value = "#1ABC9C")),
-                shiny::column(3, shiny::textInput("custom_color_8", "Strategy 8", value = "#E67E22"))
+                shiny::column(3, shiny::textInput("custom_color_5", "Strategy 5", value = "#2e7d32")),
+                shiny::column(3, shiny::textInput("custom_color_6", "Strategy 6", value = "#c62828")),
+                shiny::column(3, shiny::textInput("custom_color_7", "Strategy 7", value = "#696d74")),
+                shiny::column(3, shiny::textInput("custom_color_8", "Strategy 8", value = "#3f7f8e"))
               ),
               shiny::hr(),
               shiny::fluidRow(
-                shiny::column(4, shiny::textInput("custom_frontier", "Frontier", value = "#2C3E50")),
-                shiny::column(4, shiny::textInput("custom_dominated", "Dominated", value = "#E74C3C")),
-                shiny::column(4, shiny::textInput("custom_ext_dom", "Ext. dominated", value = "#F39C12"))
+                shiny::column(4, shiny::textInput("custom_frontier", "Frontier", value = "#18213d")),
+                shiny::column(4, shiny::textInput("custom_dominated", "Dominated", value = "#c62828")),
+                shiny::column(4, shiny::textInput("custom_ext_dom", "Ext. dominated", value = "#c0652d"))
               )
             ),
             shiny::br(),
@@ -507,4 +476,12 @@ cea_app_ui <- function(model_choices = NULL) {
       )
     )
   )
+}
+
+# URL of a file in inst/www, with its modification time as a cache buster
+# (the same pattern ShinyModels uses for its editor assets).
+.cea_asset <- function(file) {
+  path <- system.file("www", file, package = "ShinyCEA")
+  stamp <- if (nzchar(path)) as.integer(file.mtime(path)) else 0L
+  paste0("shinycea/", file, "?v=", stamp)
 }

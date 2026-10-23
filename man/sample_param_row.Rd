@@ -13,5 +13,13 @@ sample_param_row(row)
 A single numeric draw.
 }
 \description{
-Sample a Single Parameter Value from Its Distribution
+Conventions: \code{mean} is the centre of the distribution and \code{lower}/\code{upper}
+its 95\% interval. For \code{beta}, \code{gamma} and \code{normal} the interval width sets
+the variance by moment matching; for \code{lognormal} (hazard and risk ratios)
+\code{mean} is the point estimate, i.e. the median, and the interval is read on
+the log scale, as in \code{\link[=derive_lognormal]{derive_lognormal()}}. Draws are restricted only to the
+domain of the distribution (beta between 0 and 1; gamma and lognormal non-negative;
+uniform, triangular and PERT within their bounds); parameter names play no
+role. A row whose lower and upper bounds coincide carries no uncertainty and
+returns \code{base}.
 }

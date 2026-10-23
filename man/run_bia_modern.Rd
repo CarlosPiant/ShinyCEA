@@ -10,7 +10,8 @@ run_bia_modern(
   costs = NULL,
   uptake = NULL,
   model = NULL,
-  params_df = NULL
+  params_df = NULL,
+  horizon_years = NULL
 )
 }
 \arguments{
@@ -28,6 +29,10 @@ or NULL for linear uptake.}
 per-patient costs are extracted from the model's simulate() output.}
 
 \item{params_df}{Parameter data.frame (required if model is provided).}
+
+\item{horizon_years}{Model horizon in years, used to annualise the model's
+lifetime cost per patient (see \code{\link[=run_bia]{run_bia()}}); resolved from the model or
+the \code{time_horizon} parameter when \code{NULL}.}
 }
 \value{
 A list with:

@@ -1,5 +1,5 @@
-test_that("cea_palette returns all three presets", {
-  for (nm in c("uw", "classic", "lancet")) {
+test_that("cea_palette returns all four presets", {
+  for (nm in c("cream", "uw", "classic", "lancet")) {
     pal <- cea_palette(nm)
     expect_true(is.list(pal))
     expect_true(all(c("primary", "secondary", "accent", "frontier",
@@ -78,4 +78,24 @@ test_that("all three palettes produce distinct strategy colors", {
   s3 <- pals[[3]]$strategies[1]
   expect_false(s1 == s2)
   expect_false(s2 == s3)
+})
+
+test_that("cream is the default palette and matches the design tokens", {
+  pal <- cea_palette()
+  expect_equal(pal$primary, "#18213d")      # navy
+  expect_equal(pal$secondary, "#1aa3a1")    # teal
+  expect_equal(pal$dominated, "#c62828")    # error red
+  expect_equal(length(pal$strategies), 8)
+})
+
+test_that("theme_cea returns a ggplot2 theme with a transparent background", {
+  th <- theme_cea()
+  expect_s3_class(th, "theme")
+  expect_equal(th$plot.background$fill, "transparent")
+  expect_equal(th$legend.position, "bottom")
+  expect_equal(theme_cea(legend = "none")$legend.position, "none")
+  # The theme renders without error.
+  p <- ggplot2::ggplot(data.frame(x = 1:3, y = 1:3), ggplot2::aes(x, y)) +
+    ggplot2::geom_point() + th
+  expect_silent(ggplot2::ggplot_build(p))
 })

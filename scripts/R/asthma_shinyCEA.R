@@ -9,7 +9,14 @@
 # Strategies: DUP, GeneTherapy
 # =============================================================================
 
+#Install ShinyCEA from GitHub if not already installed
+
+#Install first remotes package if not already installed
+remotes::install_github("CarlosPiant/ShinyCEA") 
+
 library(ShinyCEA)
+
+
 
 # ---------------------------------------------------------------------------
 # Life table helper

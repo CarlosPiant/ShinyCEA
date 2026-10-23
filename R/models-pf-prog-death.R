@@ -63,6 +63,14 @@ cea_pf_prog_death <- function() {
     p_PF_death <- as.numeric(.nc(pars[["p_PF_death_std"]], 0.003))
     p_Prog_death <- as.numeric(.nc(pars[["p_Prog_death_std"]], 0.06))
 
+    # Monthly probabilities; an overridden cycle length rescales them (E13).
+    cl0 <- 1 / 12
+    if (abs(cl - cl0) > 1e-12) {
+      p_PF_prog <- .rescale_prob(p_PF_prog, cl0, cl)
+      p_PF_death <- .rescale_prob(p_PF_death, cl0, cl)
+      p_Prog_death <- .rescale_prob(p_Prog_death, cl0, cl)
+    }
+
     if (strategy != "std") {
       hr_p <- as.numeric(.nc(pars[[paste0("hr_prog_", strategy)]], 1))
       hr_d <- as.numeric(.nc(pars[[paste0("hr_death_", strategy)]], 1))

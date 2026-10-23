@@ -16,7 +16,6 @@ URL: https://github.com/CarlosPiant/ShinyCEA
 BugReports: https://github.com/CarlosPiant/ShinyCEA/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
 Imports:
     shiny,
     bslib,
@@ -25,9 +24,11 @@ Imports:
     rlang
 Suggests:
     testthat (>= 3.0.0),
+    htmltools,
     ggrepel,
     rmarkdown,
     knitr,
     quarto
 VignetteBuilder: knitr
 Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0

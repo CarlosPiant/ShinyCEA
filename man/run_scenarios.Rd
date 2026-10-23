@@ -16,7 +16,11 @@ of parameter overrides (e.g., \code{list(d_cost = 0, d_qaly = 0)}).}
 
 \item{wtp}{WTP threshold.}
 
-\item{ref_strategy}{Optional reference strategy.}
+\item{ref_strategy}{Optional reference strategy. When \code{NULL}, the
+reference is the max-NMB strategy of the base case (\code{base_params}) and
+is kept for every scenario, so \code{ICER_vsRef} always compares against the
+same strategy (review finding D4: a per-scenario reference left the
+strategy of interest without an ICER).}
 }
 \value{
 A data.frame with columns: Scenario, Strategy, Cost, QALY, NMB,

@@ -93,17 +93,31 @@ read_param_csv <- function(path, derive_shapes = TRUE) {
   }
 
   # Coerce types
-  df$mean <- suppressWarnings(as.numeric(df$mean))
-  df$lower <- suppressWarnings(as.numeric(df$lower))
-  df$upper <- suppressWarnings(as.numeric(df$upper))
-  df$se <- suppressWarnings(as.numeric(df$se))
-  df$base <- suppressWarnings(as.numeric(df$base))
+  # Text numbers ("0,05", "5%", "1,000") and flags ("yes", 1) are parsed
+  # explicitly; values that cannot be read raise a warning instead of
+  # silently becoming NA (review finding D3).
+  for (col in c("mean", "lower", "upper", "se", "base")) {
+    parsed <- .parse_numeric(df[[col]])
+    lost <- !is.na(parsed$raw) & nzchar(parsed$raw) & is.na(parsed$value)
+    if (any(lost)) {
+      warning(sprintf("Column '%s': could not read %s.", col,
+                      paste(sprintf("'%s'", parsed$raw[lost]), collapse = ", ")), call. = FALSE)
+    }
+    df[[col]] <- parsed$value
+  }
   df$distribution <- tolower(as.character(df$distribution))
   df$distribution[is.na(df$distribution) | df$distribution == ""] <- "fixed"
-  df$include_psa <- as.logical(df$include_psa)
-  df$include_psa[is.na(df$include_psa)] <- TRUE
-  df$include_tornado <- as.logical(df$include_tornado)
-  df$include_tornado[is.na(df$include_tornado)] <- TRUE
+  for (col in c("include_psa", "include_tornado")) {
+    parsed <- .parse_logical(df[[col]])
+    lost <- !is.na(parsed$raw) & nzchar(parsed$raw) & is.na(parsed$value)
+    if (any(lost)) {
+      warning(sprintf("Column '%s': unreadable flag(s) %s treated as TRUE.", col,
+                      paste(unique(parsed$raw[lost]), collapse = ", ")), call. = FALSE)
+    }
+    v <- parsed$value
+    v[is.na(v)] <- TRUE
+    df[[col]] <- v
+  }
 
   # Fill base from mean
   df$base[is.na(df$base)] <- df$mean[is.na(df$base)]
@@ -325,6 +339,7 @@ sample_psa <- function(param_df, n = 1000L, correlation = NULL) {
     lo <- suppressWarnings(as.numeric(row$lower))
     hi <- suppressWarnings(as.numeric(row$upper))
     se_val <- suppressWarnings(as.numeric(row$se))
+    base <- suppressWarnings(as.numeric(row$base))   # mode of triangular / PERT
 
     if (!is.finite(lo)) lo <- m * 0.8
     if (!is.finite(hi)) hi <- m * 1.2
@@ -356,11 +371,32 @@ sample_psa <- function(param_df, n = 1000L, correlation = NULL) {
       "uniform" = {
         lo + u * (hi - lo)
       },
+      # Inverse-CDF forms so the copula draws `u` are honoured (finding D2:
+      # these two distributions used to return the mean for every draw).
+      "triangular" = {
+        mode <- min(max(if (is.finite(base)) base else m, lo), hi)
+        .qtri(u, min = lo, mode = mode, max = hi)
+      },
+      "pert" = {
+        mode <- min(max(if (is.finite(base)) base else m, lo), hi)
+        lambda <- 4
+        a <- 1 + lambda * (mode - lo) / (hi - lo)
+        b <- 1 + lambda * (hi - mode) / (hi - lo)
+        lo + stats::qbeta(u, shape1 = max(a, 1e-6), shape2 = max(b, 1e-6)) * (hi - lo)
+      },
       rep(m, n)  # fallback
     )
   }
 
   as.data.frame(draws, check.names = FALSE)
+}
+
+# Quantile function of the triangular distribution (used by sample_psa()).
+.qtri <- function(u, min, mode, max) {
+  Fc <- (mode - min) / (max - min)
+  ifelse(u < Fc,
+         min + sqrt(u * (max - min) * (mode - min)),
+         max - sqrt((1 - u) * (max - min) * (max - mode)))
 }
 
 #' Add Correlation Structure to Parameters

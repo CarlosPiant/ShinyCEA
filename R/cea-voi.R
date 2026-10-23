@@ -144,7 +144,7 @@ compute_expected_loss <- function(psa_results, strategies,
 #' @return A ggplot object.
 #' @export
 plot_expected_loss <- function(el_df, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   ggplot2::ggplot(el_df, ggplot2::aes(x = .data$WTP, y = .data$Expected_Loss,
                                        color = .data$Strategy)) +
@@ -159,7 +159,7 @@ plot_expected_loss <- function(el_df, palette = NULL) {
              paste0("$", formatC(x / 1000, format = "f", digits = 1), "k"),
              paste0("$", formatC(x, format = "f", digits = 0)))
     }) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "bottom")
 }
 
@@ -170,7 +170,7 @@ plot_expected_loss <- function(el_df, palette = NULL) {
 #' @return A ggplot object.
 #' @export
 plot_evpi <- function(evpi_df, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   ggplot2::ggplot(evpi_df, ggplot2::aes(x = .data$WTP, y = .data$EVPI)) +
     ggplot2::geom_line(linewidth = 1, color = palette$primary) +
@@ -182,7 +182,7 @@ plot_evpi <- function(evpi_df, palette = NULL) {
       ifelse(x >= 1000, paste0("$", formatC(x / 1000, format = "f", digits = 0), "k"),
              paste0("$", formatC(x, format = "f", digits = 0)))
     }) +
-    ggplot2::theme_minimal(base_size = 12)
+    theme_cea()
 }
 
 #' Plot EVPPI Bar Chart
@@ -193,7 +193,7 @@ plot_evpi <- function(evpi_df, palette = NULL) {
 #' @return A ggplot object.
 #' @export
 plot_evppi <- function(evppi_df, top_n = 15, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   df <- utils::head(evppi_df[order(-evppi_df$EVPPI), ], top_n)
   df <- df[df$EVPPI > 0, ]
@@ -211,6 +211,6 @@ plot_evppi <- function(evppi_df, top_n = 15, palette = NULL) {
     ggplot2::geom_col(fill = palette$primary, alpha = 0.8, width = 0.6) +
     ggplot2::labs(x = "EVPPI ($)", y = NULL,
                   title = "Expected Value of Partial Perfect Information") +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(panel.grid.major.y = ggplot2::element_blank())
 }

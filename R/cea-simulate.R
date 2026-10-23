@@ -92,18 +92,22 @@ run_psa <- function(model, params_df, n_sim = 1000, progress_callback = NULL) {
   M <- matrix(NA_real_, nrow = n_sim, ncol = length(col_names),
               dimnames = list(NULL, col_names))
 
+  # Only rows flagged include_psa are sampled; every other row keeps its base
+  # value (review finding A2: the flag used to decide only which draws were
+  # stored, so excluded parameters still varied). The stored draws are the
+  # sampled rows, so EVPPI sees exactly the parameters that moved.
   include_vec <- params_df$include_psa
   include_vec[is.na(include_vec)] <- FALSE
-  keep_params <- if (any(include_vec)) params_df$name[include_vec] else params_df$name
+  keep_params <- if (any(include_vec)) params_df$name[include_vec] else character(0)
 
   draws_rows <- vector("list", n_sim)
   used <- 0L
   dropped <- 0L
 
   for (i in seq_len(n_sim)) {
-    draw <- vapply(seq_len(nrow(params_df)),
-                   function(k) sample_param_row(params_df[k, ]),
-                   numeric(1))
+    draw <- vapply(seq_len(nrow(params_df)), function(k) {
+      if (isTRUE(include_vec[k])) sample_param_row(params_df[k, ]) else as.numeric(params_df$base[k])
+    }, numeric(1))
     names(draw) <- params_df$name
 
     row_vec <- numeric(length(col_names))
@@ -165,14 +169,14 @@ compute_ceac <- function(psa_results, strategies, wtp_max = 200000, wtp_step = 5
       w * psa_results[[paste0(s, ".q")]] - psa_results[[paste0(s, ".cost")]]
     }, numeric(nrow(psa_results)))
 
-    if (is.matrix(nmb)) {
-      win <- apply(nmb, 1, which.max)
-    } else {
-      win <- which.max(nmb)
-    }
-
-    tab <- table(factor(win, levels = seq_along(strategies)))
-    as.numeric(tab) / sum(tab)
+    if (!is.matrix(nmb)) nmb <- matrix(nmb, nrow = 1)
+    # Each iteration gives one unit of probability, shared equally between
+    # strategies tied at the maximum NMB (review finding D8).
+    share <- vapply(seq_len(nrow(nmb)), function(i) {
+      w <- nmb[i, ] == max(nmb[i, ])
+      w / sum(w)
+    }, numeric(ncol(nmb)))
+    rowMeans(matrix(share, nrow = ncol(nmb)))
   }, numeric(length(strategies)))
 
   probs_df <- as.data.frame(t(probs))

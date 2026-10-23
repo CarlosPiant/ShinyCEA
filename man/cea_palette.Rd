@@ -4,10 +4,11 @@
 \alias{cea_palette}
 \title{Get a Named Color Palette}
 \usage{
-cea_palette(name = c("uw", "classic", "lancet"))
+cea_palette(name = c("cream", "uw", "classic", "lancet"))
 }
 \arguments{
-\item{name}{One of "uw" (University of Washington), "classic", or "lancet".}
+\item{name}{One of "cream" (the ShinyModels design: navy, teal, orange;
+the default), "uw" (University of Washington), "classic", or "lancet".}
 }
 \value{
 A named list with colors: primary, secondary, accent, light, dark,
@@ -15,6 +16,6 @@ frontier, dominated, ext_dominated, and strategies (a vector of 8 colors
 for strategy-level plots).
 }
 \description{
-Returns a list of colors for use in CEA plots. Three presets are available,
+Returns a list of colors for use in CEA plots. Four presets are available,
 or users can supply fully custom colors.
 }

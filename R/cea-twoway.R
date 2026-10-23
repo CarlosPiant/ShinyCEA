@@ -96,7 +96,7 @@ twoway_dsa <- function(model, base_pars, param1, param2,
 #' @return A ggplot object.
 #' @export
 plot_twoway_dsa <- function(twoway_result, show_contour = TRUE, palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   df <- twoway_result$grid
   p1_name <- twoway_result$param1
@@ -128,7 +128,7 @@ plot_twoway_dsa <- function(twoway_result, show_contour = TRUE, palette = NULL) 
       title = paste0("Two-Way Sensitivity: ", p1_name, " vs ", p2_name),
       subtitle = subtitle
     ) +
-    ggplot2::theme_minimal(base_size = 12) +
+    theme_cea() +
     ggplot2::theme(legend.position = "right")
 
   if (metric == "INB") {

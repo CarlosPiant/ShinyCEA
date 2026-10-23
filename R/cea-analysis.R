@@ -27,7 +27,16 @@ frontier_analysis <- function(df_cq) {
   stopifnot(all(c("Strategy", "Cost", "QALY") %in% names(df_cq)))
 
   d0 <- df_cq[!duplicated(df_cq$Strategy), ]
-  d <- d0[order(d0$QALY, d0$Cost), ]
+  # Rows without finite cost and QALY cannot be classified (review finding D7).
+  usable <- is.finite(d0$Cost) & is.finite(d0$QALY)
+  not_evaluable <- d0$Strategy[!usable]
+  # Strategies with identical cost and QALY are equivalent: one of them is
+  # classified, the others are labelled "Equivalent" rather than dominated.
+  dd <- d0[usable, ]
+  dd <- dd[order(dd$QALY, dd$Cost), ]
+  dup <- duplicated(dd[, c("Cost", "QALY")])
+  equivalent <- dd$Strategy[dup]
+  d <- dd[!dup, ]
 
   # Strict dominance
   is_dom <- logical(nrow(d))
@@ -85,7 +94,8 @@ frontier_analysis <- function(df_cq) {
   classified$Status <- ifelse(
     classified$Strategy %in% frontier_df$Strategy, "Frontier",
     ifelse(classified$Strategy %in% ext_removed, "Extendedly dominated",
-           "Dominated")
+      ifelse(classified$Strategy %in% equivalent, "Equivalent",
+        ifelse(classified$Strategy %in% not_evaluable, "Not evaluable", "Dominated")))
   )
 
   list(frontier = frontier_df, icers = icers, classified = classified)
@@ -328,6 +338,25 @@ validate_params_and_model <- function(model, df, wtp = 100000) {
     add("Parameter names", "WARN", "Duplicate names detected.")
   } else {
     add("Parameter names", "PASS")
+  }
+
+  # The models read parameters by name and fall back to built-in defaults
+  # for names they do not find, so a renamed or missing parameter silently
+  # changes the analysis (review finding E7). Compare with the model's own table.
+  expected <- tryCatch(model$default_params()$name, error = function(e) character(0))
+  if (length(expected)) {
+    missing_p <- setdiff(expected, df$name)
+    extra_p <- setdiff(df$name, expected)
+    if (length(missing_p)) {
+      add("Parameter names match model", "FAIL",
+          sprintf("Missing (model uses built-in defaults for them): %s.", paste(missing_p, collapse = ", ")),
+          "Restore the original names or reload the model's parameters.")
+    } else if (length(extra_p)) {
+      add("Parameter names match model", "WARN",
+          sprintf("Not used by the model: %s.", paste(extra_p, collapse = ", ")))
+    } else {
+      add("Parameter names match model", "PASS")
+    }
   }
 
   reversed <- !is.na(df$lower) & !is.na(df$upper) & (df$lower > df$upper)

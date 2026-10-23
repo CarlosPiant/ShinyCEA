@@ -64,6 +64,15 @@ cea_sick_sicker <- function() {
     p_S1D <- as.numeric(.null_coalesce(pars[["p_S1D_std"]], 0.02))
     p_S2D <- as.numeric(.null_coalesce(pars[["p_S2D_std"]], 0.08))
 
+    # The probabilities are per quarter-year cycle; an overridden cycle length
+    # rescales them through the constant-rate relation (review finding E13).
+    cl0 <- 0.25
+    if (abs(cl - cl0) > 1e-12) {
+      p_HS <- .rescale_prob(p_HS, cl0, cl); p_HD <- .rescale_prob(p_HD, cl0, cl)
+      p_S1S2 <- .rescale_prob(p_S1S2, cl0, cl); p_S1D <- .rescale_prob(p_S1D, cl0, cl)
+      p_S2D <- .rescale_prob(p_S2D, cl0, cl)
+    }
+
     if (strategy != "std") {
       rr_prog <- as.numeric(.null_coalesce(pars[[paste0("rr_prog_", strategy)]], 1))
       rr_death <- as.numeric(.null_coalesce(pars[[paste0("rr_death_", strategy)]], 1))

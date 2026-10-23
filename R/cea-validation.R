@@ -122,23 +122,10 @@ check_probabilities_sum <- function(param_df, prob_groups = NULL) {
   n_out <- sum(prob_params$base < 0 | prob_params$base > 1, na.rm = TRUE)
   if (n_out == 0) add("All probabilities in [0,1]", "PASS", "")
 
-  # Group sum checks
-  if (is.null(prob_groups)) {
-    # Auto-detect: group by prefix before last underscore, but only for
-    # parameters whose name starts with p_ or pr_ (not utilities, costs, etc.)
-    true_probs <- prob_params[grepl("^p_|^pr_", prob_params$name), ]
-    if (nrow(true_probs) > 0) {
-      prefixes <- sub("_[^_]+$", "", true_probs$name)
-      tab <- table(prefixes)
-      prob_groups <- list()
-      for (pfx in names(tab[tab >= 2])) {
-        members <- true_probs$name[sub("_[^_]+$", "", true_probs$name) == pfx]
-        prob_groups[[pfx]] <- members
-      }
-    } else {
-      prob_groups <- list()
-    }
-  }
+  # Group sum checks only for groups the caller defines: grouping by name
+  # prefix put parameters of different arms (p_death_t1, p_death_t2) in one
+  # group and produced false failures (review finding D5).
+  if (is.null(prob_groups)) prob_groups <- list()
 
   for (grp_name in names(prob_groups)) {
     members <- prob_groups[[grp_name]]
@@ -366,17 +353,18 @@ check_dominance_logic <- function(det_result, wtp = 100000) {
   add("Frontier status available", "PASS",
       paste0(nrow(fs), " strategies classified."))
 
-  # Verify dominated strategies
+  # Verify dominated strategies: a strategy is dominated by ANY other
+  # strategy, not only by a frontier one (review finding D6).
   dom <- fs[fs$Status == "Dominated", ]
-  front <- fs[fs$Status == "Frontier", ]
 
   for (i in seq_len(nrow(dom))) {
     d_cost <- dom$Cost[i]; d_qaly <- dom$QALY[i]
-    truly_dom <- any(front$Cost <= d_cost & front$QALY >= d_qaly &
-                       (front$Cost < d_cost | front$QALY > d_qaly))
+    others <- fs[fs$Strategy != dom$Strategy[i], ]
+    truly_dom <- any(others$Cost <= d_cost & others$QALY >= d_qaly &
+                       (others$Cost < d_cost | others$QALY > d_qaly))
     if (!truly_dom) {
       add(paste0("'", dom$Strategy[i], "' correctly dominated"), "FAIL",
-          "No frontier strategy dominates it.")
+          "No other strategy dominates it.")
     }
   }
   if (nrow(dom) > 0 && sum(grepl("FAIL", vapply(results, function(r) r$status, ""))) == 0) {
@@ -385,6 +373,7 @@ check_dominance_logic <- function(det_result, wtp = 100000) {
   }
 
   # Frontier ordering
+  front <- fs[fs$Status == "Frontier", ]
   front_ord <- front[order(front$QALY, front$Cost), ]
   if (nrow(front_ord) >= 2) {
     cost_increasing <- all(diff(front_ord$Cost) >= -1e-6)

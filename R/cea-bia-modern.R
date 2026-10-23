@@ -140,7 +140,12 @@ define_uptake_curve <- function(shares, years = 5L,
   lapply(seq_len(years), function(yr) {
     frac <- switch(shape,
       "linear" = (yr - 1) / max(years - 1, 1),
-      "s_curve" = 1 / (1 + exp(-steepness * (yr - midpoint))),
+      # Logistic rescaled so year 1 is the current mix and the last year
+      # reaches the target (review finding D11).
+      "s_curve" = {
+        f <- function(y) 1 / (1 + exp(-steepness * (y - midpoint)))
+        if (years > 1) (f(yr) - f(1)) / (f(years) - f(1)) else 1
+      },
       "immediate" = 1
     )
     mix <- from_full + frac * (to_full - from_full)
@@ -206,6 +211,9 @@ print.bia_costs <- function(x, ...) {
 #' @param model Optional `cea_model` object. If provided (and costs is NULL),
 #'   per-patient costs are extracted from the model's simulate() output.
 #' @param params_df Parameter data.frame (required if model is provided).
+#' @param horizon_years Model horizon in years, used to annualise the model's
+#'   lifetime cost per patient (see [run_bia()]); resolved from the model or
+#'   the `time_horizon` parameter when `NULL`.
 #' @return A list with:
 #'   \describe{
 #'     \item{annual}{Data.frame with Year, Scenario, Strategy, Patients,
@@ -218,7 +226,7 @@ print.bia_costs <- function(x, ...) {
 #'   }
 #' @export
 run_bia_modern <- function(population, shares, costs = NULL, uptake = NULL,
-                            model = NULL, params_df = NULL) {
+                            model = NULL, params_df = NULL, horizon_years = NULL) {
   years <- population$years
 
   # Build uptake trajectory
@@ -237,9 +245,11 @@ run_bia_modern <- function(population, shares, costs = NULL, uptake = NULL,
   } else if (!is.null(model)) {
     pars <- stats::setNames(as.list(params_df$base), params_df$name)
     strats <- model$info()$strategies
+    # Annual cost per patient = lifetime model cost / horizon (finding D1).
+    horizon_years <- .bia_horizon(model, params_df, horizon_years)
     cost_per_patient <- vapply(strats, function(s) {
       res <- safe_simulate(model, pars, s)
-      if (is.null(res)) NA_real_ else res$cost
+      if (is.null(res)) NA_real_ else res$cost / horizon_years
     }, numeric(1))
     names(cost_per_patient) <- strats
     cost_components <- NULL
@@ -382,7 +392,7 @@ scenario_bia <- function(scenarios) {
 #' @export
 plot_budget_impact <- function(bia_result, show_components = FALSE,
                                 palette = NULL) {
-  if (is.null(palette)) palette <- cea_palette("classic")
+  if (is.null(palette)) palette <- cea_palette("cream")
 
   if (show_components && !is.null(bia_result$by_component)) {
     # Stacked bar by component
@@ -408,7 +418,7 @@ plot_budget_impact <- function(bia_result, show_components = FALSE,
       ggplot2::labs(x = "Year", y = "Incremental Budget Impact ($)",
                     title = "Budget Impact by Cost Component",
                     fill = "Component") +
-      ggplot2::theme_minimal(base_size = 12) +
+      theme_cea() +
       ggplot2::theme(legend.position = "bottom")
   } else {
     # Standard waterfall
@@ -424,7 +434,7 @@ plot_budget_impact <- function(bia_result, show_components = FALSE,
                                              "Savings" = palette$primary)) +
       ggplot2::labs(x = "Year", y = "Budget Impact ($)",
                     title = "Annual Budget Impact", fill = NULL) +
-      ggplot2::theme_minimal(base_size = 12) +
+      theme_cea() +
       ggplot2::theme(legend.position = "bottom",
                      panel.grid.major.x = ggplot2::element_blank())
   }
