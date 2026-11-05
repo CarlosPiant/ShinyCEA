@@ -153,8 +153,10 @@ head(psa$draws[, 1:5], 5)
 
 ## References
 
-- Alarid-Escudero, F., et al. (2019). A Tutorial on Time-Dependent Cohort
-  State-Transition Models in R. *Medical Decision Making*, 43(1), 21-41.
+- Alarid-Escudero, F., Enns, E. A., Kuntz, K. M., Michaud, T. L., & Jalal, H.
+  (2019). "Time Traveling Is Just Too Dangerous" but some methods are worth
+  revisiting: The advantages of expected loss curves over cost-effectiveness
+  acceptability curves and frontier. *Value in Health*, 22(5), 611-618.
 - Briggs, A. H., Claxton, K., & Sculpher, M. J. (2006). *Decision Modelling
   for Health Economic Evaluation*. Oxford University Press.
 - Claxton, K., et al. (2005). Probabilistic sensitivity analysis for NICE
