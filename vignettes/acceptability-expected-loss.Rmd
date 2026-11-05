@@ -1,0 +1,235 @@
+---
+title: "CEAC, CEAF, and Expected Loss Curves"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{CEAC, CEAF, and Expected Loss Curves}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 5)
+```
+
+This vignette shows how to build the three standard graphical summaries of
+decision uncertainty from a probabilistic sensitivity analysis (PSA): the
+cost-effectiveness acceptability curve (CEAC), the cost-effectiveness
+acceptability frontier (CEAF), and the expected loss curves (ELCs). It
+follows the definitions in Alarid-Escudero et al. (2019) and uses the
+bundled Sick-Sicker model.
+
+## Three Questions, Three Curves
+
+All three curves are computed from the same PSA output: the net monetary
+benefit of strategy $d$ in iteration $i$ at a willingness-to-pay (WTP)
+threshold $\lambda$,
+
+$$B_{i,d}(\lambda) = \lambda E_{i,d} - C_{i,d}$$
+
+They differ in the question they answer:
+
+| Curve | Question | Function |
+|:------|:---------|:---------|
+| **CEAC** | How likely is each strategy to be the best? | `compute_ceac()` |
+| **CEAF** | How likely is the *optimal* strategy to be the best? | `compute_ceaf()` |
+| **ELC** | How much do I expect to lose by choosing each strategy? | `compute_expected_loss()` |
+
+## Setup
+
+```{r load}
+library(ShinyCEA)
+m <- cea_sick_sicker()
+strategies <- m$info()$strategies
+set.seed(20250605)
+psa <- run_psa(m, m$default_params(), n_sim = 1000)
+cat("Iterations used:", psa$used, "| Dropped:", psa$dropped)
+```
+
+## Cost-Effectiveness Acceptability Curve (CEAC)
+
+The probability that strategy $d$ is cost-effective is the share of PSA
+iterations in which it has the highest net benefit (Fenwick et al., 2001):
+
+$$\Pr(\text{CE})_d(\lambda) = \frac{N_d(\lambda)}{N}$$
+
+where $N_d$ is the number of iterations in which $d$ is the best strategy
+and $N$ is the number of iterations.
+
+```{r ceac}
+ceac <- compute_ceac(psa$results, strategies,
+                     wtp_max = 200000, wtp_step = 5000)
+head(ceac)
+plot_ceac(ceac)
+```
+
+At every WTP the probabilities add up to one across strategies:
+
+```{r ceac-check}
+tapply(ceac$ProbCE, ceac$WTP, sum)[1:5]
+```
+
+## Cost-Effectiveness Acceptability Frontier (CEAF)
+
+A risk-neutral decision-maker chooses the strategy with the highest
+*expected* net benefit, whatever its probability of being cost-effective.
+The CEAF follows that optimal strategy across WTP thresholds (Barton et al.,
+2008):
+
+$$d^*(\lambda) = \arg\max_d \; \frac{1}{N} \sum_{i=1}^{N} B_{i,d}(\lambda)$$
+
+and plots $\Pr(\text{CE})_{d^*}(\lambda)$.
+
+```{r ceaf}
+ceaf <- compute_ceaf(psa$results, strategies,
+                     wtp_max = 200000, wtp_step = 5000)
+head(ceaf)
+```
+
+Each row gives the optimal strategy at that WTP, its probability of being
+cost-effective, and its expected NMB. The WTP values at which the optimal
+strategy switches are:
+
+```{r ceaf-switch}
+switches <- which(ceaf$Strategy[-1] != ceaf$Strategy[-nrow(ceaf)]) + 1
+ceaf[switches, c("WTP", "Strategy", "ProbCE")]
+```
+
+Pass the frontier to `plot_ceac()` to superimpose it on the CEAC. Compute
+both on the same WTP grid so the markers sit on the curves:
+
+```{r ceac-ceaf}
+plot_ceac(ceac, ceaf = ceaf)
+```
+
+**Interpretation:** The squares mark the optimal strategy at each WTP. Where
+the squares sit on the highest curve, the optimal strategy is also the one
+most likely to be cost-effective. Where they sit on a lower curve, the two
+disagree --- this happens when the distribution of net benefit is skewed, so
+a strategy can win in most iterations yet have a lower mean. The check below
+counts the WTP values where this occurs:
+
+```{r ceaf-vs-ceac}
+top_ceac <- tapply(ceac$ProbCE, ceac$WTP, max)
+sum(ceaf$ProbCE < top_ceac[as.character(ceaf$WTP)] - 1e-12)
+```
+
+A count of zero means that, for this model, the optimal strategy is also the
+most probable one at every threshold. That is a property of this PSA, not of
+the method: always check rather than reading the optimal strategy off the
+highest CEAC.
+
+## Expected Loss Curves (ELCs)
+
+The CEAC and the CEAF report how *often* a strategy is the wrong choice, not
+how much is lost when it is. The expected loss of strategy $d$ is the average
+net benefit forgone by choosing it instead of the best strategy in each
+iteration (Eckermann et al., 2008; Alarid-Escudero et al., 2019):
+
+$$L_{i,d}(\lambda) = \max_{d'} B_{i,d'}(\lambda) - B_{i,d}(\lambda), \qquad
+\text{EL}_d(\lambda) = \frac{1}{N} \sum_{i=1}^{N} L_{i,d}(\lambda)$$
+
+```{r el}
+el <- compute_expected_loss(psa$results, strategies,
+                            wtp_max = 200000, wtp_step = 5000)
+head(el)
+```
+
+Set `show_optimal = TRUE` to mark the lower envelope of the curves:
+
+```{r el-plot}
+plot_expected_loss(el, show_optimal = TRUE)
+```
+
+**Interpretation:** The lowest curve at a given WTP is the optimal strategy,
+so the ELC conveys the same decision as the CEAF. The vertical gap between
+two curves is how much worse one strategy is than the other in expected
+dollars, which also ranks the non-optimal strategies --- useful when the
+optimal one cannot be implemented.
+
+When the curves are close together, a log scale on the y-axis magnifies the
+differences. Zero losses cannot be drawn on a log axis and are dropped:
+
+```{r el-log}
+plot_expected_loss(el, show_optimal = TRUE, log_scale = TRUE)
+```
+
+## How the Three Curves Connect
+
+The expected loss of the optimal strategy equals the EVPI, and the strategy
+with the lowest expected loss is the CEAF strategy. Both identities can be
+verified directly:
+
+```{r identities}
+evpi <- compute_evpi(psa$results, strategies,
+                     wtp_max = 200000, wtp_step = 5000)
+
+# Lowest expected loss and the strategy that attains it, per WTP
+min_el <- do.call(rbind, lapply(split(el, el$WTP), function(d) {
+  d[which.min(d$Expected_Loss), ]
+}))
+
+all.equal(min_el$Expected_Loss, evpi$EVPI, tolerance = 1e-6)
+identical(min_el$Strategy, ceaf$Strategy)
+```
+
+A side-by-side table at selected thresholds, in the layout of Table 1 of
+Alarid-Escudero et al. (2019):
+
+```{r table}
+wtp_show <- c(50000, 100000, 150000)
+tab <- merge(ceac[ceac$WTP %in% wtp_show, ],
+             el[el$WTP %in% wtp_show, ],
+             by = c("WTP", "Strategy"))
+tab$ProbCE <- round(tab$ProbCE, 2)
+tab$Expected_Loss <- round(tab$Expected_Loss)
+tab$Optimal <- ifelse(
+  tab$Strategy == ceaf$Strategy[match(tab$WTP, ceaf$WTP)], "*", "")
+tab[order(tab$WTP, tab$Expected_Loss), ]
+```
+
+Reading the two columns together shows what the CEAC alone hides. The
+strategies at the bottom of each block have nearly the same probability of
+being cost-effective (close to zero), yet their expected losses differ by
+thousands of dollars, so the CEAC cannot rank them while the ELC can. The
+reverse also occurs in practice: strategies with very different
+probabilities but almost identical expected losses (Alarid-Escudero et al.,
+2019, Table 1).
+
+## Choosing What to Report
+
+| | CEAC | CEAF | ELC |
+|:--|:--:|:--:|:--:|
+| Probability each strategy is cost-effective | Yes | Optimal only | No |
+| Identifies the optimal strategy | No | Yes | Yes |
+| Magnitude of a wrong decision | No | No | Yes |
+| Ranking of all strategies | No | No | Yes |
+| Value of further research (EVPI) | No | No | Yes |
+
+Alarid-Escudero et al. (2019) recommend reporting ELCs as a complement to
+the CEAC, the CEAF, and the EVPI rather than as a replacement. One
+limitation to keep in mind: expected loss is an average, so a few very large
+losses can be hidden by many small ones.
+
+## In the Shiny App
+
+The **CEAC** tab of `run_cea_app()` shows the same outputs: tick
+*Superimpose the acceptability frontier (CEAF)* to overlay the frontier on
+the CEAC, and the expected loss curves are drawn below it.
+
+## References
+
+- Alarid-Escudero, F., Enns, E. A., Kuntz, K. M., Michaud, T. L., & Jalal, H.
+  (2019). "Time Traveling Is Just Too Dangerous" but some methods are worth
+  revisiting: The advantages of expected loss curves over cost-effectiveness
+  acceptability curves and frontier. *Value in Health*, 22(5), 611-618.
+- Barton, G. R., Briggs, A. H., & Fenwick, E. A. L. (2008). Optimal
+  cost-effectiveness decisions: The role of the cost-effectiveness
+  acceptability curve (CEAC), the cost-effectiveness acceptability frontier
+  (CEAF), and the expected value of perfection information (EVPI).
+  *Value in Health*, 11(5), 886-897.
+- Eckermann, S., Briggs, A., & Willan, A. R. (2008). Health technology
+  assessment in the cost-disutility plane. *Medical Decision Making*, 28(2),
+  172-181.
+- Fenwick, E., Claxton, K., & Sculpher, M. (2001). Representing uncertainty:
+  The role of cost-effectiveness acceptability curves. *Health Economics*,
+  10(8), 779-787.

@@ -81,21 +81,43 @@ plot_ce_plane <- function(inc_df, wtp, palette = NULL) {
 
 #' CEAC Plot
 #'
+#' Plots the cost-effectiveness acceptability curve of each strategy. When
+#' `ceaf` is supplied, the cost-effectiveness acceptability frontier is
+#' superimposed as open squares on the curve of the optimal strategy at each
+#' WTP, as in Figure 1A of Alarid-Escudero et al. (2019).
+#'
 #' @param ceac_long Data.frame with columns: WTP, Strategy, ProbCE.
 #' @param palette Optional palette from [cea_palette()].
+#' @param ceaf Optional data.frame from [compute_ceaf()] (columns WTP,
+#'   Strategy, ProbCE) to superimpose the frontier. Compute it on the same
+#'   WTP grid as the CEAC so the markers sit on the curves.
 #' @return A ggplot object.
 #' @export
-plot_ceac <- function(ceac_long, palette = NULL) {
+plot_ceac <- function(ceac_long, palette = NULL, ceaf = NULL) {
   if (is.null(palette)) palette <- cea_palette("cream")
 
-  ggplot2::ggplot(ceac_long, ggplot2::aes(x = .data$WTP, y = .data$ProbCE,
-                                           color = .data$Strategy)) +
+  p <- ggplot2::ggplot(ceac_long, ggplot2::aes(x = .data$WTP, y = .data$ProbCE,
+                                                color = .data$Strategy)) +
     ggplot2::geom_line(linewidth = 0.9) +
     scale_color_cea(palette) +
     ggplot2::labs(x = "Willingness-to-pay", y = "Probability cost-effective",
                   color = "Strategy") +
     theme_cea() +
     ggplot2::theme(legend.position = "bottom")
+
+  if (!is.null(ceaf) && nrow(ceaf) > 0) {
+    stopifnot(all(c("WTP", "Strategy", "ProbCE") %in% names(ceaf)))
+    # A constant shape aesthetic gives the frontier its own legend entry;
+    # the markers are dark so they read on every strategy colour.
+    p <- p +
+      ggplot2::geom_point(
+        data = ceaf,
+        ggplot2::aes(x = .data$WTP, y = .data$ProbCE, shape = "Frontier (CEAF)"),
+        inherit.aes = FALSE, color = palette$dark, size = 3, stroke = 0.9
+      ) +
+      ggplot2::scale_shape_manual(values = c("Frontier (CEAF)" = 0), name = NULL)
+  }
+  p
 }
 
 #' Cost-Effectiveness Frontier Plot

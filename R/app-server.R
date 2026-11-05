@@ -723,16 +723,58 @@ cea_app_server <- function(models) {
                    wtp_max = max(input$wtp, 200000))
     })
 
-    output$ceac_plot <- shiny::renderPlot({
+    # CEAF on the same WTP grid as the CEAC, so its markers sit on the curves
+    ceaf_data <- shiny::reactive({
       shiny::req(ceac_data())
-      print(plot_ceac(ceac_data(), palette = current_palette()))
+      compute_ceaf(psa_results(), det_result()$strategies,
+                   wtp_max = max(input$wtp, 200000))
+    })
+
+    # One builder for the screen and the PNG so both honour the checkbox
+    ceac_plot_obj <- shiny::reactive({
+      shiny::req(ceac_data())
+      plot_ceac(ceac_data(), palette = current_palette(),
+                ceaf = if (isTRUE(input$ceac_show_ceaf)) ceaf_data() else NULL)
+    })
+
+    output$ceac_plot <- shiny::renderPlot({
+      print(ceac_plot_obj())
     }, bg = "transparent")
 
     output$download_ceac_png <- shiny::downloadHandler(
       filename = function() "ceac.png",
       content = function(file) {
-        ggplot2::ggsave(file, plot = plot_ceac(ceac_data(), palette = current_palette()), width = 9, height = 6, dpi = 300, units = "in")
+        ggplot2::ggsave(file, plot = ceac_plot_obj(), width = 9, height = 6, dpi = 300, units = "in")
       }
+    )
+
+    # Expected loss curves shown under the CEAC, on the CEAC's WTP grid
+    # (step 5000) so the optimal-strategy markers stay readable.
+    ceac_el_data <- shiny::reactive({
+      shiny::req(ceac_data())
+      compute_expected_loss(psa_results(), det_result()$strategies,
+                            wtp_max = max(input$wtp, 200000), wtp_step = 5000)
+    })
+
+    ceac_el_plot_obj <- shiny::reactive({
+      plot_expected_loss(ceac_el_data(), palette = current_palette(),
+                         show_optimal = TRUE)
+    })
+
+    output$ceac_el_plot <- shiny::renderPlot({
+      print(ceac_el_plot_obj())
+    }, bg = "transparent")
+
+    output$download_ceac_el_png <- shiny::downloadHandler(
+      filename = function() "expected_loss_curves.png",
+      content = function(file) {
+        ggplot2::ggsave(file, plot = ceac_el_plot_obj(), width = 9, height = 6, dpi = 300, units = "in")
+      }
+    )
+
+    output$download_ceac_el_csv <- shiny::downloadHandler(
+      filename = function() "expected_loss_curves.csv",
+      content = function(file) utils::write.csv(ceac_el_data(), file, row.names = FALSE)
     )
 
     ceac_wide <- shiny::reactive({

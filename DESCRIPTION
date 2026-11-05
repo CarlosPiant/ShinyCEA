@@ -28,7 +28,9 @@ Suggests:
     ggrepel,
     rmarkdown,
     knitr,
-    quarto
+    quarto,
+    mgcv,
+    dampack
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.1.0

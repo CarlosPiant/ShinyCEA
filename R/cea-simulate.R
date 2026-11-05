@@ -195,3 +195,59 @@ compute_ceac <- function(psa_results, strategies, wtp_max = 200000, wtp_step = 5
   rownames(long) <- NULL
   long
 }
+
+#' Compute the Cost-Effectiveness Acceptability Frontier (CEAF)
+#'
+#' At each willingness-to-pay threshold the CEAF follows the *optimal*
+#' strategy, i.e. the one with the highest expected net monetary benefit
+#' across the PSA iterations, and reports the probability that this strategy
+#' is cost-effective (Barton et al. 2008; Alarid-Escudero et al. 2019,
+#' Eq. 2). The optimal strategy is not necessarily the one with the highest
+#' probability of being cost-effective, which is why the CEAF is overlaid on
+#' the CEAC.
+#'
+#' @param psa_results Data.frame from run_psa()$results.
+#' @param strategies Character vector of strategy names.
+#' @param wtp_max Maximum WTP for the grid.
+#' @param wtp_step Step size for WTP grid.
+#' @return A data.frame with one row per WTP and columns WTP, Strategy (the
+#'   optimal strategy at that WTP), ProbCE (its probability of being
+#'   cost-effective) and Expected_NMB (its expected net monetary benefit).
+#' @references Alarid-Escudero F, Enns EA, Kuntz KM, Michaud TL, Jalal H.
+#'   "Time Traveling Is Just Too Dangerous" but Some Methods Are Worth
+#'   Revisiting: The Advantages of Expected Loss Curves Over
+#'   Cost-Effectiveness Acceptability Curves and Frontier. Value Health.
+#'   2019;22(5):611-618.
+#' @export
+#' @examples
+#' m <- cea_sick_sicker()
+#' set.seed(42)
+#' psa <- run_psa(m, m$default_params(), n_sim = 100)
+#' ceaf <- compute_ceaf(psa$results, m$info()$strategies, wtp_step = 50000)
+#' ceaf
+compute_ceaf <- function(psa_results, strategies, wtp_max = 200000, wtp_step = 5000) {
+  wtp_grid <- seq(0, wtp_max, by = wtp_step)
+  n_sim <- nrow(psa_results)
+
+  rows <- lapply(wtp_grid, function(w) {
+    # NMB matrix: rows = PSA iterations, cols = strategies
+    nmb <- vapply(strategies, function(s) {
+      w * psa_results[[paste0(s, ".q")]] - psa_results[[paste0(s, ".cost")]]
+    }, numeric(n_sim))
+    if (!is.matrix(nmb)) nmb <- matrix(nmb, nrow = 1)
+
+    # Optimal strategy = highest EXPECTED NMB (ties go to the first listed)
+    exp_nmb <- colMeans(nmb)
+    opt <- which.max(exp_nmb)
+
+    # Its probability of being cost-effective, sharing ties at the maximum
+    # equally so the value matches compute_ceac() for the same strategy.
+    is_max <- nmb == apply(nmb, 1, max)
+    prob <- mean(is_max[, opt] / rowSums(is_max))
+
+    data.frame(WTP = w, Strategy = strategies[opt], ProbCE = prob,
+               Expected_NMB = unname(exp_nmb[opt]), stringsAsFactors = FALSE)
+  })
+
+  do.call(rbind, rows)
+}

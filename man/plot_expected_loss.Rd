@@ -4,13 +4,25 @@
 \alias{plot_expected_loss}
 \title{Plot Expected Loss}
 \usage{
-plot_expected_loss(el_df, palette = NULL)
+plot_expected_loss(
+  el_df,
+  palette = NULL,
+  show_optimal = FALSE,
+  log_scale = FALSE
+)
 }
 \arguments{
 \item{el_df}{Data.frame from \code{\link[=compute_expected_loss]{compute_expected_loss()}} with columns
 WTP, Strategy, Expected_Loss.}
 
 \item{palette}{Optional palette from \code{\link[=cea_palette]{cea_palette()}}.}
+
+\item{show_optimal}{Logical; mark the strategy with the lowest expected
+loss at each WTP (the optimal strategy; its expected loss is the EVPI).}
+
+\item{log_scale}{Logical; draw the y-axis on a log10 scale, which
+magnifies small differences between strategies. Zero expected losses
+cannot be shown on a log axis and are dropped from the plot.}
 }
 \value{
 A ggplot object.
@@ -19,4 +31,9 @@ A ggplot object.
 Plots the expected opportunity loss for each strategy across WTP thresholds.
 The optimal strategy at each WTP is the one closest to zero. Recommended as
 a complement or alternative to the CEAC (Phelps & Mushlin, Hunink et al.).
+}
+\details{
+With \code{show_optimal = TRUE} the lower envelope of the curves is marked with
+open squares: it identifies the optimal strategy at each WTP and its
+height is the EVPI (Alarid-Escudero et al. 2019, Figure 1B).
 }

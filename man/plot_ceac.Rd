@@ -4,16 +4,23 @@
 \alias{plot_ceac}
 \title{CEAC Plot}
 \usage{
-plot_ceac(ceac_long, palette = NULL)
+plot_ceac(ceac_long, palette = NULL, ceaf = NULL)
 }
 \arguments{
 \item{ceac_long}{Data.frame with columns: WTP, Strategy, ProbCE.}
 
 \item{palette}{Optional palette from \code{\link[=cea_palette]{cea_palette()}}.}
+
+\item{ceaf}{Optional data.frame from \code{\link[=compute_ceaf]{compute_ceaf()}} (columns WTP,
+Strategy, ProbCE) to superimpose the frontier. Compute it on the same
+WTP grid as the CEAC so the markers sit on the curves.}
 }
 \value{
 A ggplot object.
 }
 \description{
-CEAC Plot
+Plots the cost-effectiveness acceptability curve of each strategy. When
+\code{ceaf} is supplied, the cost-effectiveness acceptability frontier is
+superimposed as open squares on the curve of the optimal strategy at each
+WTP, as in Figure 1A of Alarid-Escudero et al. (2019).
 }

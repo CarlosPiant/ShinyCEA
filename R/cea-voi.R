@@ -138,29 +138,73 @@ compute_expected_loss <- function(psa_results, strategies,
 #' The optimal strategy at each WTP is the one closest to zero. Recommended as
 #' a complement or alternative to the CEAC (Phelps & Mushlin, Hunink et al.).
 #'
+#' With `show_optimal = TRUE` the lower envelope of the curves is marked with
+#' open squares: it identifies the optimal strategy at each WTP and its
+#' height is the EVPI (Alarid-Escudero et al. 2019, Figure 1B).
+#'
 #' @param el_df Data.frame from [compute_expected_loss()] with columns
 #'   WTP, Strategy, Expected_Loss.
 #' @param palette Optional palette from [cea_palette()].
+#' @param show_optimal Logical; mark the strategy with the lowest expected
+#'   loss at each WTP (the optimal strategy; its expected loss is the EVPI).
+#' @param log_scale Logical; draw the y-axis on a log10 scale, which
+#'   magnifies small differences between strategies. Zero expected losses
+#'   cannot be shown on a log axis and are dropped from the plot.
 #' @return A ggplot object.
 #' @export
-plot_expected_loss <- function(el_df, palette = NULL) {
+plot_expected_loss <- function(el_df, palette = NULL, show_optimal = FALSE,
+                               log_scale = FALSE) {
   if (is.null(palette)) palette <- cea_palette("cream")
 
-  ggplot2::ggplot(el_df, ggplot2::aes(x = .data$WTP, y = .data$Expected_Loss,
-                                       color = .data$Strategy)) +
+  # Lower envelope: one row per WTP, the strategy with the smallest loss
+  # (ties go to the first listed, matching compute_ceaf()).
+  opt_df <- NULL
+  if (isTRUE(show_optimal)) {
+    opt_df <- do.call(rbind, lapply(split(el_df, el_df$WTP), function(d) {
+      d[which.min(d$Expected_Loss), , drop = FALSE]
+    }))
+  }
+
+  if (isTRUE(log_scale)) {
+    # log10(0) is -Inf, so non-positive losses are removed before plotting
+    el_df <- el_df[el_df$Expected_Loss > 0, , drop = FALSE]
+    if (!is.null(opt_df)) opt_df <- opt_df[opt_df$Expected_Loss > 0, , drop = FALSE]
+  }
+
+  dollar_lab <- function(x) {
+    ifelse(x >= 1000,
+           paste0("$", formatC(x / 1000, format = "f", digits = 1), "k"),
+           paste0("$", formatC(x, format = "f", digits = 0)))
+  }
+
+  p <- ggplot2::ggplot(el_df, ggplot2::aes(x = .data$WTP, y = .data$Expected_Loss,
+                                            color = .data$Strategy)) +
     ggplot2::geom_line(linewidth = 0.9) +
     scale_color_cea(palette) +
     ggplot2::labs(x = "Willingness-to-pay ($/QALY)",
-                  y = "Expected Loss ($)",
+                  y = if (isTRUE(log_scale)) "Expected Loss ($, log scale)" else "Expected Loss ($)",
                   title = "Expected Opportunity Loss by Strategy",
                   color = "Strategy") +
-    ggplot2::scale_y_continuous(labels = function(x) {
-      ifelse(x >= 1000,
-             paste0("$", formatC(x / 1000, format = "f", digits = 1), "k"),
-             paste0("$", formatC(x, format = "f", digits = 0)))
-    }) +
     theme_cea() +
     ggplot2::theme(legend.position = "bottom")
+
+  p <- p + if (isTRUE(log_scale)) {
+    ggplot2::scale_y_log10(labels = dollar_lab)
+  } else {
+    ggplot2::scale_y_continuous(labels = dollar_lab)
+  }
+
+  if (!is.null(opt_df) && nrow(opt_df) > 0) {
+    p <- p +
+      ggplot2::geom_point(
+        data = opt_df,
+        ggplot2::aes(x = .data$WTP, y = .data$Expected_Loss,
+                     shape = "Optimal strategy (EVPI)"),
+        inherit.aes = FALSE, color = palette$dark, size = 3, stroke = 0.9
+      ) +
+      ggplot2::scale_shape_manual(values = c("Optimal strategy (EVPI)" = 0), name = NULL)
+  }
+  p
 }
 
 #' Plot EVPI Across WTP Thresholds
