@@ -328,6 +328,46 @@ The app gives you an interactive environment with editable parameters, CSV
 upload/download, all the plots above, health checks, threshold analysis, and
 report generation --- all powered by the same three functions you just wrote.
 
+## Documenting the Study and the Model Diagram
+
+Three optional arguments of `new_cea_model()` carry what a reader needs to
+interpret the results. The app shows them (Model Info and Study tabs) and the
+reports print them.
+
+```{r document, eval = FALSE}
+my_model <- new_cea_model(
+  info = info, params = params, simulate = simulate,
+  # Shown on the Model Info tab
+  description = "Two-state model comparing a new drug with standard care.",
+  # A path to an image, a ggplot, or a function that draws the diagram
+  diagram = "figures/model_structure.png",
+  # Study details: the context asked for by the CHEERS 2022 checklist
+  study = cea_study(
+    population = "Adults aged 50 with early disease",
+    setting = "United States, outpatient care",
+    perspective = "Health-care payer",
+    comparators = c(control = "Standard care", treatment = "New drug, 10 mg daily"),
+    currency = "USD", price_year = "2024",
+    assumptions = c("Constant event risk", "No treatment waning")
+  )
+)
+
+# Which reporting items are covered, and what is missing
+cheers_checklist(my_model, analyses = c("deterministic", "psa"))
+```
+
+Record where each parameter value comes from with the `source` and `note`
+arguments of `cea_param()`:
+
+```{r source, eval = FALSE}
+cea_param("p_event", 0.1, 0.05, 0.2, distribution = "beta",
+          source = "Smith et al. 2020, Table 2", note = "12-month risk")
+```
+
+Models built with the ShinyModels package bring all of this with them:
+`ShinyModels::as_cea_model(spec)` passes the diagram drawn by `plot(spec)`,
+the documentation of the specification and the parameter sources.
+
 ## Tips for Building Models
 
 **Return `trace` when you can.** A Markov trace (matrix with one row per cycle,
