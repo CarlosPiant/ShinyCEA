@@ -18,6 +18,9 @@ An R package with an interactive Shiny application for **cost-effectiveness anal
 - **Shared design with ShinyModels** — the app uses the same cream / navy / teal look as the [ShinyModels](https://github.com/CarlosPiant/ShinyModels) editor, whose "Analyze in ShinyCEA" button opens it in a new tab
 - **Report generation** — Word and PDF reports with all tables and figures
 - **CSV import/export** — upload parameters, download all results
+- **Study details and CHEERS 2022** — record population, setting, perspective, comparators, currency, assumptions and parameter sources with the model (`cea_study()`), complete them in the Study tab, and see which reporting items are still missing (`cheers_checklist()`)
+- **Model diagram** — shown on the Model Info tab and in reports; models built with ShinyModels bring their diagram with them
+- **R code export** — the "R code for this tab" button shows a commented script that reproduces the analysis on screen, ready to copy or download
 
 ## Installation
 
@@ -179,6 +182,14 @@ side by side with the bundled version, pass both and use the model selector:
 run_cea_app(sick_sicker, cea_sick_sicker())
 ```
 
+## Getting the R Code of an Analysis
+
+Click **R code for this tab** in the sidebar to see the script that reproduces
+the tab you are viewing, with the model, parameter values and settings
+selected in the app. Switch to **Full script** for every tab at once, then copy
+it or download it as an `.R` file. The script uses the **PSA seed** from the
+sidebar, so its PSA results match the app.
+
 ## Bundled Example Models
 
 | Model | Function | Type |
@@ -210,4 +221,5 @@ generate_cea_report("report.docx", format = "word", model = m, det_result = det)
 
 ## Documentation
 
-See `vignette("custom-models", package = "ShinyCEA")` for a detailed guide on creating custom models.
+- `vignette("user-guide", package = "ShinyCEA")`: a step-by-step tour of the app with screenshots, using the Sick-Sicker example.
+- `vignette("custom-models", package = "ShinyCEA")`: a detailed guide on creating custom models.
