@@ -1,8 +1,11 @@
 #' Build the CEA App Server
 #' @param models Named list of cea_model objects.
+#' @param model_code Optional character vector named like `models`: the R
+#'   expression that creates each model (e.g. `"cea_sick_sicker()"`), used by
+#'   the "R code" export. `NULL` or `NA` entries give a placeholder line.
 #' @return A Shiny server function.
 #' @keywords internal
-cea_app_server <- function(models) {
+cea_app_server <- function(models, model_code = NULL) {
   function(input, output, session) {
     .nc <- function(a, b) if (is.null(a)) b else a
 
@@ -104,13 +107,14 @@ cea_app_server <- function(models) {
 
     # Any change of the inputs after a run makes the displayed results stale;
     # the banner in the results tabs says so until the user runs again.
-    shiny::observeEvent(list(params_rv(), input$wtp, input$ref_mode, input$ref_pinned), {
+    shiny::observeEvent(list(params_rv(), input$wtp, input$ref_mode, input$ref_pinned,
+                             input$psa_seed), {
       if (!is.null(det_rv()) || !is.null(psa_rv())) stale(TRUE)
     }, ignoreInit = TRUE)
     stale_banner <- function() {
       if (!isTRUE(stale())) return(NULL)
       shiny::div(class = "cea-stale",
-                 "Inputs changed since this run (parameter table, WTP or reference). ",
+                 "Inputs changed since this run (parameter table, WTP, reference or PSA seed). ",
                  "The results below are for the previous inputs: run again to update them.")
     }
 
@@ -164,6 +168,11 @@ cea_app_server <- function(models) {
         v <- .parse_logical(v)$value
         if (is.na(v)) return(reject(paste0("'", info$value, "' is not TRUE/FALSE.")))
       }
+      # Documentation columns are free text; an emptied cell means "no value"
+      if (col_name %in% .PARAM_DOC_COLS) {
+        v <- trimws(as.character(v))
+        if (!nzchar(v)) v <- NA_character_
+      }
       # The deterministic run uses `base`, the PSA is centred on `mean` and the
       # tornado on the bounds. When these columns held the same value before
       # the edit they describe one quantity, so they move together (E4).
@@ -205,6 +214,51 @@ cea_app_server <- function(models) {
         shiny::p(desc)
       }
     })
+
+    # Model diagram. A model can carry an image file, a function that draws
+    # the diagram (e.g. plot(spec) from ShinyModels) or a ggplot; models
+    # without one show nothing.
+    output$model_diagram_ui <- shiny::renderUI({
+      d <- current_model()$diagram
+      kind <- .diagram_kind(d)
+      if (kind == "none" || (kind == "file" && !file.exists(d))) return(NULL)
+      shiny::tagList(
+        shiny::h4("Model diagram"),
+        if (kind == "file") {
+          shiny::imageOutput("model_diagram_img", height = "auto")
+        } else {
+          # Height follows the diagram's own shape, for a plot about 800 px wide
+          shiny::tagList(
+            shiny::plotOutput("model_diagram_plot",
+                              height = paste0(round(.diagram_height(d, 8) * 100), "px")),
+            shiny::downloadButton("download_diagram_png", "Download diagram (PNG)",
+                                  class = "btn-outline-secondary btn-sm"))
+        },
+        shiny::br(), shiny::br()
+      )
+    })
+
+    output$model_diagram_plot <- shiny::renderPlot({
+      # The block is inserted by renderUI, and its first size report can be a
+      # few pixels wide: drawing then fails with "figure margins too large".
+      # Wait for a real width; the plot redraws when the size arrives.
+      w <- session$clientData$output_model_diagram_plot_width
+      shiny::req(is.numeric(w), w >= 100)
+      .draw_diagram(current_model()$diagram)
+    }, bg = "transparent")
+
+    output$model_diagram_img <- shiny::renderImage({
+      path <- current_model()$diagram
+      ext <- tolower(tools::file_ext(path))
+      type <- switch(ext, svg = "image/svg+xml", jpg = , jpeg = "image/jpeg", "image/png")
+      list(src = path, contentType = type, alt = "Model diagram",
+           style = "max-width: 100%; height: auto;")
+    }, deleteFile = FALSE)
+
+    output$download_diagram_png <- shiny::downloadHandler(
+      filename = function() paste0(current_model()$info()$key, "_diagram.png"),
+      content = function(file) .cea_diagram_png(current_model(), file)
+    )
 
     output$model_param_desc <- DT::renderDT({
       shiny::req(params_rv())
@@ -546,6 +600,15 @@ cea_app_server <- function(models) {
       if (!is.finite(N) || N < 10) N <- 100
       N <- max(10, min(N, 10000))
 
+      seed <- suppressWarnings(as.numeric(input$psa_seed))
+      if (length(seed) != 1 || !is.finite(seed)) {
+        shiny::showNotification("Enter a PSA seed (a whole number) before running.",
+                                type = "error", duration = 6)
+        return()
+      }
+      # Seeding right before the draws makes the PSA repeatable and lets the
+      # exported R code (set.seed + run_psa) reproduce these exact results.
+      set.seed(seed)
       res <- tryCatch(
         run_psa(current_model(), params_rv(), n_sim = N),
         error = function(e) {
@@ -800,48 +863,11 @@ cea_app_server <- function(models) {
     )
 
     # --- Survival ---
-    .find_cycle_length <- function(df) {
-      cl <- tryCatch({
-        if ("cycle_length" %in% df$name) as.numeric(df$base[df$name == "cycle_length"][1])
-        else if ("cycle_length_months" %in% df$name) as.numeric(df$base[df$name == "cycle_length_months"][1]) / 12
-        else 1
-      }, error = function(e) 1)
-      if (is.na(cl) || cl <= 0) 1 else cl
-    }
-
-    .extract_surv <- function(res, cycle_len) {
-      if ("survival" %in% names(res) && is.data.frame(res$survival)) {
-        df <- res$survival
-        if (!all(c("time", "surv") %in% names(df))) {
-          return(data.frame(time = numeric(0), surv = numeric(0), curve = character(0),
-                            stringsAsFactors = FALSE))
-        }
-        if (!"curve" %in% names(df)) df$curve <- "OS"
-        return(df[, c("time", "surv", "curve")])
-      }
-      if ("trace" %in% names(res) && is.matrix(res$trace)) {
-        dcol <- which(grepl("^d$|death|dead", tolower(colnames(res$trace))))
-        if (length(dcol) > 0) {
-          os <- 1 - res$trace[, dcol[1]]
-          time <- seq(0, nrow(res$trace) - 1) * cycle_len
-          return(data.frame(time = time, surv = as.numeric(os), curve = "OS",
-                            stringsAsFactors = FALSE))
-        }
-      }
-      data.frame(time = numeric(0), surv = numeric(0), curve = character(0),
-                 stringsAsFactors = FALSE)
-    }
-
+    # Data shaping lives in cea_survival_data() / cea_trace_data() so that the
+    # exported R code can call the same functions.
     survival_df_det <- shiny::reactive({
       shiny::req(det_result())
-      cl <- .find_cycle_length(params_rv())
-      out <- lapply(names(det_result()$res), function(s) {
-        df <- .extract_surv(det_result()$res[[s]], cl)
-        if (nrow(df) == 0) return(NULL)
-        df$strategy <- s
-        df
-      })
-      do.call(rbind, out[!vapply(out, is.null, logical(1))])
+      cea_survival_data(det_result(), params_rv())
     })
 
     output$survival_controls <- shiny::renderUI({
@@ -875,70 +901,9 @@ cea_app_server <- function(models) {
     )
 
     # --- Traces ---
-    .derive_trace_from_surv <- function(surv_df) {
-      if (!all(c("time", "surv", "curve") %in% names(surv_df))) {
-        return(data.frame(time = numeric(0), state = character(0), prob = numeric(0),
-                          stringsAsFactors = FALSE))
-      }
-      os <- surv_df[tolower(surv_df$curve) == "os", ]
-      pfs <- surv_df[tolower(surv_df$curve) == "pfs", ]
-      os <- os[order(os$time), ]
-      if (nrow(os) == 0) {
-        return(data.frame(time = numeric(0), state = character(0), prob = numeric(0),
-                          stringsAsFactors = FALSE))
-      }
-      if (nrow(pfs) == 0) {
-        death <- pmin(pmax(1 - os$surv, 0), 1)
-        return(rbind(
-          data.frame(time = os$time, state = "Alive", prob = os$surv, stringsAsFactors = FALSE),
-          data.frame(time = os$time, state = "Death", prob = death, stringsAsFactors = FALSE)
-        ))
-      }
-      pfs <- pfs[order(pfs$time), ]
-      pfs_interp <- if (!identical(os$time, pfs$time)) {
-        stats::approx(pfs$time, pfs$surv, xout = os$time, rule = 2, ties = "ordered")$y
-      } else {
-        pfs$surv
-      }
-      pf <- pmin(pmax(pfs_interp, 0), 1)
-      prog <- pmin(pmax(os$surv - pfs_interp, 0), 1)
-      death <- pmin(pmax(1 - os$surv, 0), 1)
-      rbind(
-        data.frame(time = os$time, state = "PF", prob = pf, stringsAsFactors = FALSE),
-        data.frame(time = os$time, state = "Progressed", prob = prog, stringsAsFactors = FALSE),
-        data.frame(time = os$time, state = "Death", prob = death, stringsAsFactors = FALSE)
-      )
-    }
-
     trace_df_det <- shiny::reactive({
       shiny::req(det_result())
-      cl <- .find_cycle_length(params_rv())
-      out <- lapply(names(det_result()$res), function(s) {
-        r <- det_result()$res[[s]]
-        if (!is.null(r$trace) && is.matrix(r$trace) && nrow(r$trace) > 0) {
-          tr <- r$trace
-          time <- seq(0, nrow(tr) - 1) * cl
-          d <- as.data.frame(tr)
-          d$time <- time
-          d_long <- stats::reshape(d, direction = "long",
-                                   varying = setdiff(names(d), "time"),
-                                   v.names = "prob", timevar = "state",
-                                   times = setdiff(names(d), "time"),
-                                   idvar = "time")
-          d_long$strategy <- s
-          rownames(d_long) <- NULL
-          return(d_long[, c("strategy", "time", "state", "prob")])
-        }
-        if (!is.null(r$survival) && is.data.frame(r$survival) && nrow(r$survival) > 0) {
-          dt <- .derive_trace_from_surv(r$survival)
-          if (nrow(dt) > 0) {
-            dt$strategy <- s
-            return(dt[, c("strategy", "time", "state", "prob")])
-          }
-        }
-        NULL
-      })
-      do.call(rbind, out[!vapply(out, is.null, logical(1))])
+      cea_trace_data(det_result(), params_rv())
     })
 
     output$trace_controls <- shiny::renderUI({
@@ -1596,6 +1561,197 @@ cea_app_server <- function(models) {
       }
     )
 
+    # --- Study details and CHEERS checklist ---
+    # The form is generated from .study_fields (R/cea-study.R), prefilled from
+    # the model, and rebuilt when the model changes.
+    output$study_form <- shiny::renderUI({
+      mod <- current_model()
+      study <- .as_study(mod$study)
+      strats <- mod$info()$strategies
+      field_input <- function(i) {
+        f <- .study_fields$field[i]
+        id <- paste0("study_", f)
+        val <- paste(study[[f]], collapse = "\n")
+        if (.study_fields$long[i]) {
+          shiny::textAreaInput(id, .study_fields$label[i], value = val, width = "100%",
+                               rows = if (f == "assumptions") 5 else 2,
+                               placeholder = .study_fields$hint[i])
+        } else {
+          shiny::textInput(id, .study_fields$label[i], value = val, width = "100%",
+                           placeholder = .study_fields$hint[i])
+        }
+      }
+      # One description per strategy (CHEERS item 7), placed after the setting
+      comparators <- shiny::tagList(
+        shiny::h6("Comparators: describe each strategy"),
+        lapply(seq_along(strats), function(i) {
+          shiny::textInput(paste0("study_comp_", i), strats[i], width = "100%",
+                           value = .nc(unname(study$comparators[strats[i]]), ""))
+        })
+      )
+      after_setting <- which(.study_fields$field == "setting")
+      idx <- seq_len(nrow(.study_fields))
+      shiny::tagList(
+        lapply(idx[idx <= after_setting], field_input),
+        comparators,
+        lapply(idx[idx > after_setting], field_input)
+      )
+    })
+    # The form must exist before the Study tab is opened: the report and the
+    # code export read its inputs.
+    shiny::outputOptions(output, "study_form", suspendWhenHidden = FALSE)
+
+    # Study details as edited in the form (the model's own until it is drawn)
+    current_study <- shiny::reactive({
+      mod <- current_model()
+      if (is.null(input$study_population)) return(.as_study(mod$study))
+      strats <- mod$info()$strategies
+      vals <- lapply(.study_fields$field, function(f) {
+        v <- .nc(input[[paste0("study_", f)]], "")
+        if (f == "assumptions") strsplit(v, "\n", fixed = TRUE)[[1]] else v
+      })
+      names(vals) <- .study_fields$field
+      comp <- vapply(seq_along(strats), function(i) .nc(input[[paste0("study_comp_", i)]], ""),
+                     character(1))
+      vals$comparators <- stats::setNames(comp, strats)
+      do.call(cea_study, vals)
+    })
+
+    # Analyses run so far. The run-on-click results signal "not run yet" with
+    # a silent error, hence the tryCatch.
+    analyses_run <- shiny::reactive({
+      done <- function(expr) isTRUE(tryCatch(!is.null(expr), error = function(e) FALSE))
+      c(if (!is.null(det_rv())) "deterministic",
+        if (!is.null(psa_rv())) "psa",
+        if (done(sc_results())) "scenarios",
+        if (done(sg_results())) "subgroups",
+        if (done(equity_result())) "equity")
+    })
+
+    cheers_data <- shiny::reactive({
+      cheers_checklist(current_model(), study = current_study(), params = params_rv(),
+                       analyses = analyses_run())
+    })
+
+    output$cheers_badges <- shiny::renderUI({
+      st <- cheers_data()$Status
+      shiny::tagList(
+        shiny::span(class = "badge bg-success", paste0("Reported: ", sum(st == "Reported"))),
+        shiny::span(class = "badge bg-warning", paste0("Partly: ", sum(st == "Partly"))),
+        shiny::span(class = "badge bg-danger", paste0("Not reported: ", sum(st == "Not reported"))),
+        shiny::span(class = "badge bg-secondary", paste0("Manuscript: ", sum(st == "Manuscript")))
+      )
+    })
+
+    output$cheers_table <- DT::renderDT({
+      status_colors <- c(Reported = "#2e7d32", Partly = "#c0652d",
+                         `Not reported` = "#c62828", Manuscript = "#696d74")  # design tokens
+      DT::datatable(cheers_data(), rownames = FALSE,
+                    options = list(pageLength = 28, dom = "t", scrollX = TRUE)) |>
+        DT::formatStyle("Status",
+          color = DT::styleEqual(names(status_colors), rep("white", length(status_colors))),
+          backgroundColor = DT::styleEqual(names(status_colors), unname(status_colors)),
+          fontWeight = "bold")
+    })
+
+    output$download_cheers_csv <- shiny::downloadHandler(
+      filename = function() "cheers_checklist.csv",
+      content = function(file) utils::write.csv(cheers_data(), file, row.names = FALSE)
+    )
+
+    # --- R code export ---
+    # Everything the generator needs, as a plain list (see R/cea-code.R). Inputs
+    # of tabs not opened yet are NULL; the generator then uses the app defaults.
+    code_state <- shiny::reactive({
+      mod <- current_model()
+      key <- if (length(models) == 1) names(models)[1] else input$model_key
+      strats <- mod$info()$strategies
+      # Market shares typed on the BIA tab (NULL until that tab has been opened)
+      mix <- function(prefix) {
+        v <- lapply(strats, function(s) input[[paste0(prefix, s)]])
+        if (any(vapply(v, is.null, logical(1)))) return(NULL)
+        v <- vapply(v, function(x) if (is.finite(x)) as.numeric(x) else 0, numeric(1))
+        stats::setNames(v, strats)
+      }
+      list(
+        model_code = if (is.null(model_code) || is.null(key)) NA_character_ else unname(model_code[key]),
+        model_name = mod$info()$name,
+        strategies = strats,
+        default_params = sanitize_params(mod$default_params())$df,
+        params = params_rv(),
+        wtp = input$wtp, ref_mode = input$ref_mode, ref_pinned = input$ref_pinned,
+        psa_n = input$psa_n, psa_seed = input$psa_seed,
+        palette_choice = .nc(input$palette_choice, "cream"),
+        palette_custom = if (identical(input$palette_choice, "custom")) {
+          pal <- current_palette()
+          list(strategies = pal$strategies, frontier = input$custom_frontier,
+               dominated = input$custom_dominated, ext_dominated = input$custom_ext_dom)
+        },
+        tornado_metric = input$tornado_metric, tornado_target = tornado_target(),
+        tw = list(param1 = input$tw_param1, param2 = input$tw_param2, target = input$tw_target,
+                  metric = input$tw_metric, n = input$tw_n),
+        thr = list(strategy = input$thr_strategy, param = input$thr_param, mode = input$thr_mode,
+                   grid_n = input$thr_grid_n, min = input$thr_min, max = input$thr_max),
+        psa_param_select = input$psa_param_select, psa_param_bins = input$psa_param_bins,
+        ceac_show_ceaf = input$ceac_show_ceaf,
+        surv_curve = input$surv_curve, surv_facets = input$surv_facets,
+        trace_scope = input$trace_scope, trace_state = input$trace_state,
+        trace_facet = input$trace_facet,
+        scenarios = sc_store(), forest_target = input$forest_target,
+        forest_metric = input$forest_metric,
+        composites = wc_store(), wc_forest_metric = input$wc_forest_metric,
+        bia = list(pop = input$bia_pop, years = input$bia_years, growth = input$bia_growth,
+                   cur_mix = mix("bia_cur_"), new_mix = mix("bia_new_"),
+                   linear = input$bia_linear_uptake),
+        subgroups = sg_store(), sg_ref = input$sg_ref, sg_target = input$sg_target,
+        sg_forest_metric = input$sg_forest_metric,
+        study = current_study(), analyses = analyses_run(),
+        model_subgroups = mod$subgroups, equity_epsilon = input$equity_epsilon,
+        equity_lorenz_strat = input$equity_lorenz_strat
+      )
+    })
+
+    # Code for the tab being viewed, or for every tab ("Full script")
+    code_lines <- shiny::reactive({
+      tab <- if (identical(input$code_scope, "full")) "full" else .nc(input$main_tabs, "Model Info")
+      cea_analysis_code(tab, code_state())
+    })
+
+    shiny::observeEvent(input$show_code, {
+      shiny::showModal(shiny::modalDialog(
+        title = "R code to reproduce this analysis",
+        size = "l", easyClose = TRUE,
+        shiny::radioButtons("code_scope", NULL, inline = TRUE,
+                            choices = c("This tab" = "tab", "Full script (all tabs)" = "full")),
+        shiny::p("Paste this into your analysis script. It uses the model, parameter values ",
+                 "and settings currently selected in the app.", class = "cea-hint"),
+        shiny::verbatimTextOutput("code_text"),
+        footer = shiny::tagList(
+          # The browser copies the text of the code block; no server round trip
+          shiny::tags$button(
+            type = "button", class = "btn btn-outline-secondary btn-sm",
+            onclick = paste0(
+              "var b = this; navigator.clipboard.writeText(",
+              "document.getElementById('code_text').innerText).then(function() {",
+              "b.innerText = 'Copied'; setTimeout(function() { b.innerText = 'Copy'; }, 1500); });"),
+            "Copy"),
+          shiny::downloadButton("download_code", "Download (.R)",
+                                class = "btn-outline-secondary btn-sm"),
+          shiny::modalButton("Close")
+        )
+      ))
+    })
+
+    output$code_text <- shiny::renderText(paste(code_lines(), collapse = "\n"))
+
+    output$download_code <- shiny::downloadHandler(
+      filename = function() {
+        tab <- if (identical(input$code_scope, "full")) "full" else .nc(input$main_tabs, "setup")
+        paste0("shinycea_", gsub("[^a-z0-9]+", "_", tolower(tab)), ".R")
+      },
+      content = function(file) writeLines(code_lines(), file)
+    )
+
     # --- Reports ---
     .collect_report_plots <- function() {
       safe_get <- function(expr) {
@@ -1645,7 +1801,10 @@ cea_app_server <- function(models) {
             psa_result = psa_res,
             wtp = input$wtp,
             plots = .collect_report_plots(),
-            psa_summary_df = .collect_psa_summary()
+            psa_summary_df = .collect_psa_summary(),
+            study = current_study(),
+            params_df = params_rv(),
+            checklist = cheers_data()
           )
           shiny::incProgress(0.5)
         })
@@ -1670,7 +1829,10 @@ cea_app_server <- function(models) {
             psa_result = psa_res,
             wtp = input$wtp,
             plots = .collect_report_plots(),
-            psa_summary_df = .collect_psa_summary()
+            psa_summary_df = .collect_psa_summary(),
+            study = current_study(),
+            params_df = params_rv(),
+            checklist = cheers_data()
           )
           shiny::incProgress(0.5)
         })

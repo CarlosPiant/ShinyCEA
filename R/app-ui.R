@@ -56,9 +56,19 @@ cea_app_ui <- function(model_choices = NULL) {
           shiny::radioButtons("tornado_metric", "Tornado metric",
                               choices = c("INB", "ICER"), selected = "INB", inline = TRUE),
           shiny::numericInput("wtp", "WTP ($/QALY)", value = 100000, min = 0, step = 1000),
-          shiny::numericInput("psa_n", "PSA iterations", value = 1000, min = 100, step = 100)
+          shiny::numericInput("psa_n", "PSA iterations", value = 1000, min = 100, step = 100),
+          # Seed of the PSA draws: the same seed gives the same PSA, in the app
+          # and in the exported R code.
+          shiny::numericInput("psa_seed", "PSA seed", value = 20250605, min = 0, step = 1)
         ),
         shiny::hr(),
+        shiny::div(class = "sidebar-section",
+          shiny::h6("Code"),
+          shiny::actionButton("show_code", "R code for this tab",
+                              icon = shiny::icon("code"),
+                              class = "btn-outline-secondary btn-sm"),
+          shiny::p("R script that reproduces the tab you are viewing.", class = "cea-hint")
+        ),
         shiny::div(class = "sidebar-section",
           shiny::h6("Reports"),
           shiny::downloadButton("download_report_docx", "Word (.docx)",
@@ -79,8 +89,29 @@ cea_app_ui <- function(model_choices = NULL) {
           shiny::tabPanel("Model Info",
             shiny::uiOutput("model_info_title"),
             shiny::uiOutput("model_info_description"),
+            # Model diagram, when the model carries one (file, drawing
+            # function or ggplot); built by the server so it can be omitted.
+            shiny::uiOutput("model_diagram_ui"),
             shiny::h4("Parameter Dictionary"),
             DT::DTOutput("model_param_desc")
+          ),
+          shiny::tabPanel("Study",
+            shiny::h4("Study details"),
+            shiny::p("The context a reader needs to interpret the results. These fields come ",
+                     "from the model and can be completed here; they are printed in the ",
+                     "report and included in the exported R code.", class = "cea-hint"),
+            shiny::uiOutput("study_form"),
+            shiny::hr(),
+            shiny::h4("CHEERS 2022 reporting checklist"),
+            shiny::p("Whether each item is available from the study details, the parameter ",
+                     "table and the analyses run so far. It checks that information is ",
+                     "present, not that it is adequate. 'Manuscript' items are written by ",
+                     "the authors in the report.", class = "cea-hint"),
+            shiny::div(style = "display:flex; gap:8px; margin:8px 0 14px 0;",
+                       shiny::uiOutput("cheers_badges")),
+            DT::DTOutput("cheers_table"),
+            shiny::downloadButton("download_cheers_csv", "Download checklist (CSV)",
+                                  class = "btn-outline-secondary btn-sm")
           ),
           shiny::tabPanel("Parameters",
             shiny::h4("Edit parameters"),

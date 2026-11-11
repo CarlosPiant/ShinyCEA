@@ -5,7 +5,12 @@
 #'   to turn the lifetime cost per patient into an annual cost).
 #' @param params A function returning a tibble of default parameters.
 #' @param simulate A function(pars, strategy) returning list(cost, qaly, trace?, survival?).
-#' @param diagram Optional path to a diagram image file (PNG/SVG).
+#' @param diagram Optional model diagram, shown on the Model Info tab of the
+#'   app and in reports. One of: a path to an image file (PNG, JPG or SVG); a
+#'   function that draws the diagram on the current graphics device (e.g.
+#'   `function() plot(spec)` for a model built with ShinyModels); or a ggplot
+#'   object. A drawing function may carry the attribute `"diagram_height"`,
+#'   its preferred height in inches when 8 inches wide.
 #' @param description Optional character string or path to a markdown file describing the model.
 #' @param composites Optional named list of predefined weighted composites for
 #'   the Weighted Comparator tab. Each element is a named numeric vector of
@@ -17,12 +22,20 @@
 #' @param scenarios Optional named list of predefined scenarios for the
 #'   Scenarios tab. Each element is a named list of parameter overrides.
 #'   Example: \code{list("No discount" = list(d_cost = 0, d_qaly = 0))}.
+#' @param study Optional study details created with [cea_study()]
+#'   (population, setting, perspective, comparators, currency, assumptions,
+#'   ...): the context that the CHEERS reporting checklist asks for. Shown and
+#'   editable in the Study tab of the app, and printed in reports.
 #' @return A validated `cea_model` object.
 #' @export
 new_cea_model <- function(info, params, simulate, diagram = NULL,
                           description = NULL, composites = NULL,
-                          subgroups = NULL, scenarios = NULL) {
+                          subgroups = NULL, scenarios = NULL, study = NULL) {
   stopifnot(is.function(info), is.function(params), is.function(simulate))
+  .diagram_kind(diagram)                       # errors on an unusable diagram
+  if (!is.null(study) && !inherits(study, "cea_study")) {
+    stop("`study` must be created with cea_study().", call. = FALSE)
+  }
 
   model <- structure(
     list(
@@ -33,7 +46,8 @@ new_cea_model <- function(info, params, simulate, diagram = NULL,
       description = description,
       composites = composites,
       subgroups = subgroups,
-      scenarios = scenarios
+      scenarios = scenarios,
+      study = study
     ),
     class = "cea_model"
   )
@@ -120,7 +134,11 @@ print.cea_model <- function(x, ...) {
   cat("  Strategies:", paste(info$strategies, collapse = ", "), "\n")
   df <- x$default_params()
   cat("  Parameters:", nrow(df), "\n")
-  if (!is.null(x$diagram)) cat("  Diagram:", x$diagram, "\n")
+  if (!is.null(x$diagram)) {
+    kind <- .diagram_kind(x$diagram)
+    cat("  Diagram:", if (kind == "file") x$diagram else paste0("(", kind, ")"), "\n")
+  }
+  if (length(x$study)) cat("  Study details:", length(x$study), "field(s) filled\n")
   if (!is.null(x$composites)) cat("  Composites:", length(x$composites), "predefined\n")
   if (!is.null(x$scenarios)) cat("  Scenarios:", length(x$scenarios), "predefined\n")
   if (!is.null(x$subgroups)) cat("  Subgroups:", length(x$subgroups), "predefined\n")
@@ -137,15 +155,22 @@ print.cea_model <- function(x, ...) {
 #' @param distribution Distribution for PSA sampling.
 #' @param include_psa Include in PSA?
 #' @param include_tornado Include in tornado?
+#' @param source Where the value comes from (a reference, a dataset, expert
+#'   opinion). Reported in the parameter table of reports and checked by
+#'   [cheers_checklist()].
+#' @param note Free-text note, e.g. how the value was derived from its source
+#'   or why the distribution was chosen.
 #' @return A single-row tibble.
 #' @export
 cea_param <- function(name, mean, lower, upper, base = mean,
                       distribution = "fixed",
-                      include_psa = TRUE, include_tornado = TRUE) {
+                      include_psa = TRUE, include_tornado = TRUE,
+                      source = NA_character_, note = NA_character_) {
   data.frame(
     name = name, mean = mean, lower = lower, upper = upper, base = base,
     distribution = distribution,
     include_psa = include_psa, include_tornado = include_tornado,
+    source = as.character(source), note = as.character(note),
     stringsAsFactors = FALSE
   )
 }
