@@ -1,3 +1,7 @@
+# Optional documentation columns of a parameter table (the names ShinyModels
+# uses): what the parameter is, its unit, where the value comes from, a note.
+.PARAM_DOC_COLS <- c("description", "unit", "source", "note")
+
 #' Sanitize a Parameter Table
 #'
 #' Ensures required columns exist, coerces types, fixes reversed bounds,
@@ -52,6 +56,15 @@ sanitize_params <- function(df) {
 
   df$distribution[is.na(df$distribution) | df$distribution == "" |
                      df$distribution == "none"] <- "fixed"
+
+  # Documentation columns are optional free text. An empty CSV column is read
+  # as logical NA, which would refuse text typed into it later: keep them
+  # character, with empty strings as NA.
+  for (nm in intersect(.PARAM_DOC_COLS, names(df))) {
+    v <- trimws(as.character(df[[nm]]))
+    v[!is.na(v) & !nzchar(v)] <- NA_character_
+    df[[nm]] <- v
+  }
 
   empty_name <- is.na(df$name) | trimws(df$name) == ""
   if (any(empty_name, na.rm = TRUE)) {

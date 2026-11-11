@@ -12,6 +12,13 @@
 #' @param plots A named list of ggplot objects to include. Recognized names:
 #'   tornado, ce_plane, ceac, frontier, survival, traces, threshold.
 #' @param psa_summary_df Optional data.frame of PSA summary statistics.
+#' @param study Study details ([cea_study()]) printed in a "Study details"
+#'   section; defaults to those stored in the model. The model diagram, when
+#'   the model has one, is printed with them.
+#' @param params_df Optional parameter table, printed as an appendix with its
+#'   `source` and `note` columns.
+#' @param checklist Optional output of [cheers_checklist()], printed as an
+#'   appendix.
 #' @param quiet Logical; suppress rmarkdown rendering messages?
 #' @return The path to the rendered file (invisibly).
 #' @export
@@ -23,6 +30,9 @@ generate_cea_report <- function(output_file,
                                 wtp = 100000,
                                 plots = list(),
                                 psa_summary_df = NULL,
+                                study = model$study,
+                                params_df = NULL,
+                                checklist = NULL,
                                 quiet = TRUE) {
   format <- match.arg(format)
 
@@ -61,6 +71,24 @@ generate_cea_report <- function(output_file,
     utils::write.csv(psa_summary_df, psa_path, row.names = FALSE)
     psa_summary_csv <- psa_path
   }
+
+  # --- Study details, model diagram, parameters and checklist ---
+  # Each is optional: an empty path makes the template skip the section.
+  write_tab <- function(df, name) {
+    if (is.null(df) || !nrow(df)) return("")
+    path <- file.path(tmpdir, name)
+    utils::write.csv(df, path, row.names = FALSE, na = "")
+    path
+  }
+  study_csv <- write_tab(.study_table(study), "study.csv")
+  params_csv <- write_tab(
+    if (!is.null(params_df)) {
+      params_df[, intersect(c("name", "base", "lower", "upper", "distribution", "source", "note"),
+                            names(params_df)), drop = FALSE]
+    }, "params.csv")
+  checklist_csv <- write_tab(checklist, "checklist.csv")
+  diagram_png <- file.path(tmpdir, "diagram.png")
+  if (!.cea_diagram_png(model, diagram_png)) diagram_png <- ""
 
   # --- Save plots as PNG ---
   plot_paths <- list(
@@ -112,7 +140,11 @@ generate_cea_report <- function(output_file,
       traces_png = plot_paths$traces,
       threshold_png = plot_paths$threshold,
       n_psa = n_psa,
-      psa_dropped = psa_dropped
+      psa_dropped = psa_dropped,
+      study_csv = study_csv,
+      diagram_png = diagram_png,
+      params_csv = params_csv,
+      checklist_csv = checklist_csv
     ),
     envir = new.env(parent = globalenv()),
     quiet = quiet

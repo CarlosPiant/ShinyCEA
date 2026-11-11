@@ -145,6 +145,50 @@ cea_sick_sicker <- function() {
       "Young (low risk)" = list(p_HS_std = 0.02, p_HD_std = 0.002, u_H = 0.95),
       "Middle-aged" = list(p_HS_std = 0.05, p_HD_std = 0.005, u_H = 0.85),
       "Elderly (high risk)" = list(p_HS_std = 0.10, p_HD_std = 0.015, u_H = 0.70)
+    ),
+    description = paste(
+      "Teaching example with hypothetical values. A cohort starts Healthy, can become",
+      "Sick, progress to Sicker, and die from any state. Standard care is compared with",
+      "four treatments that change the risks of progression and death at different drug",
+      "costs. Three-month cycles over a 10-year horizon."),
+    # Structure drawn in base graphics: progression left to right, death below
+    diagram = .state_diagram(
+      states = data.frame(id = c("H", "S1", "S2", "D"),
+                          label = c("Healthy", "Sick", "Sicker", "Dead"),
+                          x = c(0, 2.6, 5.2, 2.6), y = c(1, 1, 1, -0.7),
+                          stringsAsFactors = FALSE),
+      edges = data.frame(from = c("H", "S1", "H", "S1", "S2"),
+                         to = c("S1", "S2", "D", "D", "D"), stringsAsFactors = FALSE),
+      height = 3.6),
+    # Study details: illustrative only, to show what the Study tab and the
+    # CHEERS checklist expect. Some fields (price year, valuation of outcomes,
+    # costing, parameter sources) are left empty on purpose.
+    study = cea_study(
+      objective = paste("Teaching example: which of four hypothetical treatments for a",
+                        "progressive chronic disease gives the best value compared with",
+                        "standard care?"),
+      population = "Hypothetical cohort of healthy adults at risk of a progressive chronic disease",
+      setting = "Hypothetical; not tied to a country or health system",
+      perspective = "Health-care payer (illustrative)",
+      comparators = c(
+        std = "Standard care, no drug cost",
+        t1 = "Hypothetical treatment 1: moderate effect on progression, low drug cost",
+        t2 = "Hypothetical treatment 2: larger effect on progression, higher drug cost",
+        t3 = "Hypothetical treatment 3: small effect on progression, lowest drug cost",
+        t4 = "Hypothetical treatment 4: largest effect on progression, highest drug cost"),
+      time_horizon = "10 years (parameter time_horizon)",
+      discount_rate = "3% per year for costs and QALYs (parameters d_cost and d_qaly)",
+      outcome = "Quality-adjusted life years (QALYs)",
+      currency = "USD (illustrative)",
+      model_rationale = paste("Four-state cohort Markov model (Healthy, Sick, Sicker, Dead):",
+                              "the Sick-Sicker structure used in decision-modelling tutorials,",
+                              "with four treatment strategies added."),
+      assumptions = c(
+        "Everyone starts in the Healthy state",
+        "No recovery: people only move to worse states or die",
+        "Transition probabilities are constant over time",
+        "Treatment effects last for the whole time horizon",
+        "Costs and QALYs are counted at the end of each cycle (no half-cycle correction)")
     )
   )
 }

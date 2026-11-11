@@ -219,6 +219,16 @@ render_hta_report <- function(model, params_df = NULL, wtp = 100000,
     sep
   )
 
+  # Study details (CHEERS context) and model diagram, when the model has them
+  study_tab <- .study_table(model$study)
+  if (nrow(study_tab) > 0) {
+    body <- c(body, "# Study Details", "", .qmd_kable(study_tab, "Study details."), "", sep)
+  }
+  diagram_fp <- file.path(fig_dir, "model_diagram.png")
+  if (.cea_diagram_png(model, diagram_fp)) {
+    body <- c(body, "# Model Diagram", "", paste0("![Model structure](", diagram_fp, ")"), "", sep)
+  }
+
   # --- 2. Deterministic CEA ---
   message("Collecting deterministic results...")
   cea <- collect_cea_results(model, params_df, wtp)
@@ -278,7 +288,7 @@ render_hta_report <- function(model, params_df = NULL, wtp = 100000,
   body <- c(body,
     "# Appendix: Parameter Table", "",
     .qmd_kable(params_df[, intersect(c("name", "mean", "lower", "upper",
-                                         "distribution", "include_psa"),
+                                         "distribution", "include_psa", "source", "note"),
                                       names(params_df))],
                 "Model parameters."), ""
   )
@@ -292,6 +302,16 @@ render_hta_report <- function(model, params_df = NULL, wtp = 100000,
     paste0("PASS: ", val$summary$Count[val$summary$Status == "PASS"],
            " | WARN: ", val$summary$Count[val$summary$Status == "WARN"],
            " | FAIL: ", val$summary$Count[val$summary$Status == "FAIL"]), ""
+  )
+
+  # --- 9. CHEERS checklist ---
+  # Analyses this report actually ran decide the status of items 18-24
+  ran <- c("deterministic", if (n_psa > 0) "psa", if (!is.null(scenarios)) "scenarios",
+           if (!is.null(subgroups)) "subgroups")
+  body <- c(body,
+    "# Appendix: CHEERS 2022 Checklist", "",
+    .qmd_kable(cheers_checklist(model, params = params_df, analyses = ran),
+               "Availability of each CHEERS 2022 reporting item."), ""
   )
 
   # --- Write .qmd ---
