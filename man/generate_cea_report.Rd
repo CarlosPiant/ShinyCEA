@@ -13,6 +13,9 @@ generate_cea_report(
   wtp = 1e+05,
   plots = list(),
   psa_summary_df = NULL,
+  study = model$study,
+  params_df = NULL,
+  checklist = NULL,
   quiet = TRUE
 )
 }
@@ -33,6 +36,16 @@ generate_cea_report(
 tornado, ce_plane, ceac, frontier, survival, traces, threshold.}
 
 \item{psa_summary_df}{Optional data.frame of PSA summary statistics.}
+
+\item{study}{Study details (\code{\link[=cea_study]{cea_study()}}) printed in a "Study details"
+section; defaults to those stored in the model. The model diagram, when
+the model has one, is printed with them.}
+
+\item{params_df}{Optional parameter table, printed as an appendix with its
+\code{source} and \code{note} columns.}
+
+\item{checklist}{Optional output of \code{\link[=cheers_checklist]{cheers_checklist()}}, printed as an
+appendix.}
 
 \item{quiet}{Logical; suppress rmarkdown rendering messages?}
 }

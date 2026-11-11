@@ -12,7 +12,9 @@ cea_param(
   base = mean,
   distribution = "fixed",
   include_psa = TRUE,
-  include_tornado = TRUE
+  include_tornado = TRUE,
+  source = NA_character_,
+  note = NA_character_
 )
 }
 \arguments{
@@ -31,6 +33,13 @@ cea_param(
 \item{include_psa}{Include in PSA?}
 
 \item{include_tornado}{Include in tornado?}
+
+\item{source}{Where the value comes from (a reference, a dataset, expert
+opinion). Reported in the parameter table of reports and checked by
+\code{\link[=cheers_checklist]{cheers_checklist()}}.}
+
+\item{note}{Free-text note, e.g. how the value was derived from its source
+or why the distribution was chosen.}
 }
 \value{
 A single-row tibble.

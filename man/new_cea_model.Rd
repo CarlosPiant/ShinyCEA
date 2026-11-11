@@ -12,7 +12,8 @@ new_cea_model(
   description = NULL,
   composites = NULL,
   subgroups = NULL,
-  scenarios = NULL
+  scenarios = NULL,
+  study = NULL
 )
 }
 \arguments{
@@ -24,7 +25,12 @@ to turn the lifetime cost per patient into an annual cost).}
 
 \item{simulate}{A function(pars, strategy) returning list(cost, qaly, trace?, survival?).}
 
-\item{diagram}{Optional path to a diagram image file (PNG/SVG).}
+\item{diagram}{Optional model diagram, shown on the Model Info tab of the
+app and in reports. One of: a path to an image file (PNG, JPG or SVG); a
+function that draws the diagram on the current graphics device (e.g.
+\code{function() plot(spec)} for a model built with ShinyModels); or a ggplot
+object. A drawing function may carry the attribute \code{"diagram_height"},
+its preferred height in inches when 8 inches wide.}
 
 \item{description}{Optional character string or path to a markdown file describing the model.}
 
@@ -40,6 +46,11 @@ Example: \code{list("High risk" = list(p_prog = 0.1), "Low risk" = list(p_prog =
 \item{scenarios}{Optional named list of predefined scenarios for the
 Scenarios tab. Each element is a named list of parameter overrides.
 Example: \code{list("No discount" = list(d_cost = 0, d_qaly = 0))}.}
+
+\item{study}{Optional study details created with \code{\link[=cea_study]{cea_study()}}
+(population, setting, perspective, comparators, currency, assumptions,
+...): the context that the CHEERS reporting checklist asks for. Shown and
+editable in the Study tab of the app, and printed in reports.}
 }
 \value{
 A validated \code{cea_model} object.

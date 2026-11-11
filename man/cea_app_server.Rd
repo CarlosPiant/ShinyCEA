@@ -4,10 +4,14 @@
 \alias{cea_app_server}
 \title{Build the CEA App Server}
 \usage{
-cea_app_server(models)
+cea_app_server(models, model_code = NULL)
 }
 \arguments{
 \item{models}{Named list of cea_model objects.}
+
+\item{model_code}{Optional character vector named like \code{models}: the R
+expression that creates each model (e.g. \code{"cea_sick_sicker()"}), used by
+the "R code" export. \code{NULL} or \code{NA} entries give a placeholder line.}
 }
 \value{
 A Shiny server function.

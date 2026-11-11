@@ -28,6 +28,10 @@ params:
   threshold_png: ""
   n_psa: !r 0
   psa_dropped: !r 0
+  study_csv: ""
+  diagram_png: ""
+  params_csv: ""
+  checklist_csv: ""
 ---
 
 ```{r setup, include=FALSE}
@@ -56,6 +60,20 @@ fmt_currency <- function(x) {
 | **WTP threshold** | `r fmt_currency(params$wtp)` /QALY |
 | **PSA iterations** | `r format(params$n_psa, big.mark = ",")` |
 | **PSA dropped** | `r params$psa_dropped` |
+
+```{r study, results="asis"}
+# Study details and model diagram: printed only when the model provides them
+study_tab <- read_csv_safe(params$study_csv)
+if (!is.null(study_tab) && nrow(study_tab) > 0) {
+  cat("\n\n## Study Details\n\n")
+  print(knitr::kable(study_tab, caption = "Study details (CHEERS 2022 items 3 to 17, 21, 27, 28)."))
+}
+if (has_file(params$diagram_png)) cat("\n\n## Model Diagram\n\n")
+```
+
+```{r diagram, fig.cap="Model structure.", out.width="90%"}
+if (has_file(params$diagram_png)) knitr::include_graphics(params$diagram_png)
+```
 
 ---
 
@@ -154,6 +172,25 @@ if (has_file(params$traces_png)) knitr::include_graphics(params$traces_png) else
 
 ```{r threshold, fig.cap="Threshold analysis: parameter value where ICER = WTP or INB = 0."}
 if (has_file(params$threshold_png)) knitr::include_graphics(params$threshold_png) else cat("*Threshold analysis not available.*")
+```
+
+```{r appendix, results="asis"}
+# Appendices: parameter table with sources, and the CHEERS checklist
+par_tab <- read_csv_safe(params$params_csv)
+if (!is.null(par_tab) && nrow(par_tab) > 0) {
+  cat("\n\n# Appendix: Parameters\n\n")
+  par_tab[is.na(par_tab)] <- ""
+  print(knitr::kable(par_tab, caption = "Model parameters: base value, range, distribution and source."))
+}
+chk_tab <- read_csv_safe(params$checklist_csv)
+if (!is.null(chk_tab) && nrow(chk_tab) > 0) {
+  cat("\n\n# Appendix: CHEERS 2022 Checklist\n\n")
+  cat("Availability of each reporting item in this analysis. 'Manuscript' items are",
+      "written by the authors. Reference: Husereau D, et al. Value in Health.",
+      "2022;25(1):3-9.\n\n")
+  chk_tab[is.na(chk_tab)] <- ""
+  print(knitr::kable(chk_tab, caption = "CHEERS 2022 reporting checklist."))
+}
 ```
 
 ---

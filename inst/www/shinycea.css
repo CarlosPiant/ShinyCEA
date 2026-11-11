@@ -88,3 +88,8 @@ h5 { font-size: 0.95rem; }
 .dataTables_wrapper .dataTables_filter input, .dataTables_wrapper .dataTables_length select {
   background: var(--card); border: 1.5px solid var(--line); border-radius: 7px; }
 .form-check-input:checked { background-color: var(--navy); border-color: var(--navy); }
+
+/* R code export window: the script scrolls inside the dialog and keeps its
+   line breaks, so long scripts do not stretch the page. */
+#code_text { max-height: 55vh; overflow: auto; white-space: pre; font-size: 0.8rem;
+  background: #fffaf0; border: 1.5px solid var(--line); border-radius: 9px; padding: 10px 12px; }
