@@ -18,7 +18,7 @@ This guide is for someone opening ShinyCEA for the first time. It explains
 what the app does, then walks through a complete analysis of the bundled
 Sick-Sicker model, from launching the app in R to exporting the code.
 
-## What the App Does
+## What the App Does 
 
 ShinyCEA is an R package with a point-and-click app for **cost-effectiveness
 analysis (CEA)**: comparing the costs and health effects (QALYs) of several
