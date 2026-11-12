@@ -23,3 +23,6 @@ Thumbs.db
 quality_reports/
 .claude
 CLAUDE.md
+# Build artifacts
+Rplots.pdf
+vignettes/*.html
