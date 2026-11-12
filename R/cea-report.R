@@ -117,38 +117,50 @@ generate_cea_report <- function(output_file,
   psa_dropped <- if (!is.null(psa_result)) psa_result$dropped else 0L
   ref_label <- if (!is.null(det_result)) det_result$ref else "N/A"
 
-  rmarkdown::render(
-    input = template,
+  # Everything is rendered inside tmpdir: the template is copied next to the
+  # tables and images, which are referenced by file name, and the output is
+  # written there too. With the input, resources and output in one folder,
+  # pandoc finds every image whatever rmarkdown does with paths (rmarkdown
+  # 2.32 relativised absolute paths and dropped the images).
+  rmd <- file.path(tmpdir, "cea_report.Rmd")
+  file.copy(template, rmd, overwrite = TRUE)
+  rel <- function(path) if (nzchar(path)) basename(path) else ""
+  rendered <- rmarkdown::render(
+    input = rmd,
     output_format = output_format,
-    output_file = basename(output_file),
-    output_dir = dirname(output_file),
+    output_file = paste0("report.", if (format == "word") "docx" else "pdf"),
+    output_dir = tmpdir,
     params = list(
       model_name = info$name,
       model_key = info$key,
       strategies = info$strategies,
       wtp = wtp,
       ref_label = ref_label,
-      det_table_csv = det_table_csv,
-      frontier_csv = frontier_csv,
-      icers_csv = icers_csv,
-      psa_summary_csv = psa_summary_csv,
-      tornado_png = plot_paths$tornado,
-      ce_plane_png = plot_paths$ce_plane,
-      ceac_png = plot_paths$ceac,
-      frontier_png = plot_paths$frontier,
-      survival_png = plot_paths$survival,
-      traces_png = plot_paths$traces,
-      threshold_png = plot_paths$threshold,
+      det_table_csv = rel(det_table_csv),
+      frontier_csv = rel(frontier_csv),
+      icers_csv = rel(icers_csv),
+      psa_summary_csv = rel(psa_summary_csv),
+      tornado_png = rel(plot_paths$tornado),
+      ce_plane_png = rel(plot_paths$ce_plane),
+      ceac_png = rel(plot_paths$ceac),
+      frontier_png = rel(plot_paths$frontier),
+      survival_png = rel(plot_paths$survival),
+      traces_png = rel(plot_paths$traces),
+      threshold_png = rel(plot_paths$threshold),
       n_psa = n_psa,
       psa_dropped = psa_dropped,
-      study_csv = study_csv,
-      diagram_png = diagram_png,
-      params_csv = params_csv,
-      checklist_csv = checklist_csv
+      study_csv = rel(study_csv),
+      diagram_png = rel(diagram_png),
+      params_csv = rel(params_csv),
+      checklist_csv = rel(checklist_csv)
     ),
     envir = new.env(parent = globalenv()),
     quiet = quiet
   )
+  dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
+  if (!file.copy(rendered, output_file, overwrite = TRUE)) {
+    stop("Could not write the report to ", output_file, call. = FALSE)
+  }
 
   invisible(normalizePath(output_file, mustWork = FALSE))
 }
